@@ -1,5 +1,5 @@
 # DustalkChat（チャット UI）→ Dustalk 本体の連携 API 契約。
-# 手動管理。PhoneAgent（電話）経路の契約は同ディレクトリの openapi.yaml（自動生成）。
+# 手動管理。PhoneAgent（電話）経路の契約は ../phone/openapi.yaml（自動生成）。
 # 両者は同一ドメイン（回収申し込み）の別表現で、将来は単一契約への収斂を想定（下記 info 参照）。
 openapi: 3.0.3
 info:
@@ -20,7 +20,7 @@ info:
     検証は `src/lib/slots/schema.ts`）を起点に 1:1 で写したものだから。
 
     ## PhoneAgent 契約との関係 / 将来統合メモ
-    電話経路の契約は同ディレクトリの **`openapi.yaml`（PhoneAgent から自動生成）**。
+    電話経路の契約は **`../phone/openapi.yaml`（PhoneAgent から自動生成）**。
     本書の `ApplicationRequest`（チャット由来 = Slots ベース）と、その `SpotIntake` /
     `Applicant` / `Item` は **同一ドメイン（回収申し込み）の別表現**。
     チャット側の方が情報量が多い（品目ごとの依頼先・希望時間帯・構造化住所など）。
@@ -47,7 +47,7 @@ paths:
       summary: 顧客データ取得（電話番号で照会）
       description: |
         電話番号をキーに既存顧客を照会する。受付開始時にフォームをプレフィルする用途。
-        暫定実装は `./data-models.md` の `CustomerRecord`（S3 簡易顧客マスタ）に対応し、
+        暫定実装は `../phone/components/schemas.yaml` の `CustomerRecord`（S3 簡易顧客マスタ）に対応し、
         将来 Dustalk 顧客 API に置換される。PhoneAgent 契約の `GET /customers/{phone}`
         （`LookupResult` を返す）と同一の顧客マスタを参照する想定。
       operationId: lookupCustomer
@@ -288,7 +288,7 @@ components:
       description: |
         申し込み依頼ボディ。`DustalkChat/.../src/lib/slots/types.ts` の `Slots` に対応。
         `Slots.meta`（UI 通過記録フラグ）は送信しない。
-        PhoneAgent の `SpotIntake`（openapi.yaml）と同一ドメインの別表現。
+        PhoneAgent の `SpotIntake`（../phone/openapi.yaml）と同一ドメインの別表現。
       required: [flow, location, items, providerAssignments, requester]
       properties:
         flow:
@@ -366,7 +366,7 @@ components:
           description: 品目内容（自由表現。例 "冷蔵庫"）。PhoneAgent `Item.name` に対応。
         industrialCategory:
           type: string
-          description: 産廃20分類のいずれか（事業者のみ）。語彙は ./glossary.md 参照。
+          description: 産廃20分類のいずれか（事業者のみ）。語彙は ../../glossary.md 参照。
         estimatedQuantity:
           type: string
           description: 数量（自由表現。例 "45L × 3袋/日"）。
@@ -449,7 +449,7 @@ components:
     # ---- レスポンス（暫定）----
     Customer:
       type: object
-      description: 顧客照会結果。./data-models.md の `CustomerRecord` に対応（暫定）。
+      description: 顧客照会結果。../phone/components/schemas.yaml の `CustomerRecord` に対応（暫定）。
       required: [phone, customerType, firstSeenAt, lastSeenAt]
       properties:
         phone:
@@ -485,7 +485,7 @@ components:
 
     ApplicationAccepted:
       type: object
-      description: 申し込み受付成功レスポンス（暫定）。openapi.yaml の `IntakeAccepted` に相当。
+      description: 申し込み受付成功レスポンス（暫定）。../phone/openapi.yaml の `IntakeAccepted` に相当。
       required: [applicationId, receivedAt]
       properties:
         applicationId:
@@ -502,7 +502,7 @@ components:
 
     Error:
       type: object
-      description: エラーレスポンス共通 body（暫定）。openapi.yaml の `ApiError` に対応。
+      description: エラーレスポンス共通 body（暫定）。../phone/openapi.yaml の `ApiError` に対応。
       required: [code, message]
       properties:
         code:

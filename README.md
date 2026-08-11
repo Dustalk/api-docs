@@ -38,8 +38,8 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 
 | 経路 | 仕様 | 状態 | 真実源 / 管理 |
 |---|---|---|---|
-| **PhoneAgent（電話）** → Dustalk 本体 | [`phone/openapi.yaml`](phone/openapi.yaml)（3.1） | 暫定 | PhoneAgent `server/models.py`（Pydantic）から自動生成。`python -m scripts.gen_api_models`。手動編集不可 |
-| **DustalkChat（チャット）** → Dustalk 本体 | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml)（3.0.3） | 暫定 | DustalkChat `src/lib/slots/types.ts` の `Slots` 型を起点に手動 |
+| **PhoneAgent（電話）** → Dustalk 本体 | [`phone/openapi.yaml`](phone/openapi.yaml)（3.1） | 暫定 | `PhoneAgent/phone-agent/server/models.py`（Pydantic）から自動生成。`python -m scripts.gen_api_models`。手動編集不可 |
+| **DustalkChat（チャット）** → Dustalk 本体 | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml)（3.0.3） | 暫定 | `DustalkChat/dustalk-chat/src/lib/slots/types.ts` の `Slots` 型を起点に手動 |
 | **DustalkChat** → ImageModel（画像認識） | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml)（3.0.3） | 実装済 | `ImageModel/image-model` 実装を起点に手動 |
 
 PhoneAgent 経路と DustalkChat 経路は同一ドメイン（回収申し込み）の別表現。チャット経路の方が
@@ -51,11 +51,11 @@ PhoneAgent 経路と DustalkChat 経路は同一ドメイン（回収申し込�
 
 ### 電話経路の更新フロー
 
-`phone/` は PhoneAgent の `server/models.py` から**直接生成**されます（コピーではない）。
+`phone/` は `PhoneAgent/phone-agent/server/models.py` から**直接生成**されます（コピーではない）。
 モデルを変えたら PhoneAgent リポで生成器を実行 → このリポを commit & push してください。
 
 ```sh
-# PhoneAgent リポにて（出力先は <work>/Dustalk/api/phone/）
+# PhoneAgent リポにて（出力先は <work>/dustalk/Platform/docs/api/phone/）
 .venv/bin/python -m scripts.gen_api_models
 .venv/bin/python -m scripts.gen_api_models --check   # 差分（再生成漏れ）検出
 
@@ -102,9 +102,27 @@ npx @redocly/cli preview-docs phone@v1   # ブラウザ表示（phone/chat/image
 npx @redocly/cli lint                    # 3 サービスを検証
 ```
 
+## 予定変更（本体フロー同期に伴うモデル改訂）
+
+依頼者フロー（Dustalk 本体 = Figma `dustalk_theguild_design`）の同期で、共通モデルに以下の改訂が必要。
+`phone/` は **PhoneAgent `server/models.py` から自動生成**のため、変更は **models.py を一次編集 → 再生成**（`python -m scripts.gen_api_models`）で反映する（生成物を手編集しない）。チャット経路は `chat/openapi.chat.yaml` / `Slots` 型も同方向で改訂。
+
+| 対象モデル | 現状 | 改訂内容 |
+|---|---|---|
+| `WasteCategory` | 7値 | Dustalk 本体の排出区分（約19区分）に合わせ**約19値へ拡張**（旧7値は移行対応表で吸収）。英語キー命名は需確認 |
+| `Item` / `RecurringWasteItem` の数量 | `quantity` / `volume` 自由記述文字列 | **`{value, unit}` 構造**へ（単位は排出区分依存） |
+| `RecurringPlan` | `frequency` + `weekday?` | **回収サイクル構造**（`cycle`: 毎週/隔週/毎月(日付指定)/毎月(曜日指定) + `weekdays[]` + `day_of_month`） |
+| `Applicant` | individual/business、company/store_name 任意 | 事業者の**業態形態（個人/法人）**で分岐。個人=屋号＋事業者名、法人=法人名＋代表者名、連絡先「同じ」フラグ |
+| `IntakeAccepted` | `intake_id` / `status` / `estimated_cost` | **受付番号（例 GHG295）＋品目枝番（GHG295-01）**、ステータス、**見積り有効期限**、依頼詳細/キャンセルを表現 |
+| 処分方法 | （未定義） | **個別/一括**、依頼先（個人5種 / 事業者: 民間回収・民間持込・無料引取・訪問買取）、**無料引取2モード**（自分で持込/回収を希望）を表現 |
+| 持込先 | （未定義） | **処理業者 / 店舗**エンティティ（対応品目・料金/kg・営業時間・定休日・位置）。出所は需確認 |
+| JWNET | （未定義） | 事業者・民間業者持込で **JWNET 登録有無・加入者番号・公開確認キー** |
+
+> ImageModel 経路（`/api/detect`）は既に bbox・型番属性（型番/メーカー/年式/容量）を返す。複数品目検出・属性出力範囲は ImageModel 仕様と整合。
+
 ## 未確定事項
 
-- エンドポイント URL・バージョニング・採番方式
+- エンドポイント URL・バージョニング・採番方式（`GHG###` / 枝番 `-01` の採番規則含む）
 - 認証方式の確定（経路間で統一するか）
 - PhoneAgent 経路とチャット経路の契約を **単一契約に収斂** させるか
 - `/customers/{phone}` で定期回収の進行中スケジュール（次回回収日・契約状態）を返すか
