@@ -1,15 +1,22 @@
 # ImageModel（画像認識モデル）の API 契約。手動管理。
-# 本体: ../../ImageModel/image-model（FastAPI / AWS App Runner）。
+# 本体: ../../../../ImageModel/image-model（FastAPI / AWS App Runner）。
 # DustalkChat はブラウザ→Next.js プロキシ（/api/detect）→本 API の順で呼ぶ。
 openapi: 3.0.3
 info:
-  title: ImageModel API（画像物体検出）
-  version: 1.0.0
+  title: ImageModel API（画像物体検出・産廃分類）
+  version: 1.1.0
   description: |
-    画像から回収対象品目を検出し、品目名・構造化属性（型番/メーカー/年式/容量）・
-    バウンディングボックス（画像に対する % 座標）を返す REST API。
+    画像から回収対象品目または産業廃棄物の構成を判定する REST API。
 
-    内部は Google Gemini（primary: gemini-3.1-flash-lite / fallback: gemini-2.5-flash-lite）。
+    2 つのモードを持つ。
+    - `mode=general`（既定）: 品目名・構造化属性（型番/メーカー/年式/容量）・
+      バウンディングボックス（画像に対する % 座標）を返す
+    - `mode=industrial`: 産業廃棄物の大分類（JWNET 32 分類）・構成割合・堆積体積を返す
+
+    両モードとも、判定が曖昧な箇所を示す `retakeSuggestions` を返す。
+    追加撮影した写真を `additional` で渡すと、主写真と統合して再推定する。
+
+    内部は Google Gemini（primary: gemini-3.5-flash / fallback: gemini-2.5-flash-lite）。
     本体実装は `ImageModel/image-model`（FastAPI, Python 3.12, port 8080）。
 
     ## 呼び出し経路
@@ -21,6 +28,8 @@ info:
     ## ⚠️ クライアント型との差分（既知）
     `src/lib/imageModel.ts` の `DetectResponse` / `DetectedItem` は現状
     **`attributes` と トップレベル `model` を型に含めていない**（実 API は返す）。
+    さらに DustalkChat は `mode` / `industrial` 系フィールド / `retakeSuggestions` を
+    いずれも利用しておらず、品目名だけを取り出している。
     本書が実 API の正。クライアント型は将来追従させる想定。
 
 servers:
@@ -33,10 +42,11 @@ security: []
 paths:
   /api/detect:
     post:
-      summary: 画像から品目を検出
+      summary: 画像から品目を検出 / 産業廃棄物を分類
       description: |
-        画像 1 枚を受け取り、検出した品目のリストを返す。
-        無料引取候補カテゴリ（家電・自転車等）では型番/メーカー/年式/容量を抽出する。
+        画像を受け取り、`mode` に応じて品目検出または産廃分類の結果を返す。
+        `mode=general` では無料引取候補カテゴリ（家電・自転車等）で
+        型番/メーカー/年式/容量を抽出する。
         認証なし（パブリック）。ただしサーバ側 CORS で許可 Origin が制限される。
       operationId: detect
       requestBody:
@@ -51,19 +61,36 @@ paths:
                   type: string
                   format: binary
                   description: |
-                    検出対象の画像ファイル。
+                    判定対象の主写真。
                     対応形式: image/jpeg, image/png, image/gif, image/webp。最大 10MB。
+                mode:
+                  type: string
+                  description: |
+                    判定モード。`general` は品目検出（bbox 付き）、
+                    `industrial` は産業廃棄物の大分類・構成割合・堆積体積。
+                  enum: [general, industrial]
+                  default: general
+                additional:
+                  type: array
+                  description: |
+                    同じ対象を別角度から撮り直した追加写真（任意・複数可）。
+                    指定すると主写真と統合して再推定する。
+                    座標（bbox / region）は常に主写真を基準に返る。
+                  items:
+                    type: string
+                    format: binary
       responses:
         "200":
-          description: 検出成功
+          description: 判定成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DetectResponse"
               examples:
                 refrigerator:
-                  summary: 冷蔵庫（無料引取候補・属性あり）
+                  summary: 冷蔵庫（mode=general・無料引取候補・属性あり）
                   value:
+                    mode: general
                     items:
                       - id: 0
                         name: 冷蔵庫
@@ -80,10 +107,12 @@ paths:
                           y: 20.3
                           width: 45.2
                           height: 60.8
-                    model: gemini-3.1-flash-lite
+                    retakeSuggestions: []
+                    model: gemini-3.5-flash
                 nonAppliance:
-                  summary: 家具など（属性は空文字）
+                  summary: 家具など（mode=general・属性は空文字・追加撮影ガイドあり）
                   value:
+                    mode: general
                     items:
                       - id: 0
                         name: ソファ
@@ -100,9 +129,43 @@ paths:
                           y: 40.0
                           width: 70.0
                           height: 35.0
-                    model: gemini-3.1-flash-lite
+                    retakeSuggestions:
+                      - id: 1
+                        region:
+                          x: 60.0
+                          y: 55.0
+                          width: 25.0
+                          height: 30.0
+                        reason: 奥の家電の銘板が見えず型番を読み取れない
+                        instruction: 奥の家電に近づいて正面から撮影してください
+                    model: gemini-3.5-flash
+                industrial:
+                  summary: 産業廃棄物モード（mode=industrial）
+                  value:
+                    mode: industrial
+                    items: []
+                    classifications:
+                      - majorCategory: 廃プラスチック類
+                        code: "0600000"
+                        ratio: 60
+                        confidence: high
+                        evidence: 発泡スチロールとフィルム状の梱包材が堆積の大半を占める
+                      - majorCategory: 木くず
+                        code: "0800000"
+                        ratio: 40
+                        confidence: medium
+                        evidence: 木製パレットの破材が右奥に積まれている
+                    volume:
+                      min: 3.5
+                      max: 5.0
+                      unit: m3
+                      basis: 木製パレット（1.1m 角）2 枚分の高さを基準に概算
+                      referenceObjects: [木製パレット, ブロック塀]
+                    sceneNote: 屋外の集積場に混合廃棄物が山積みされている
+                    retakeSuggestions: []
+                    model: gemini-3.5-flash
         "400":
-          description: 非対応のファイル形式、またはサイズ超過（10MB）
+          description: 非対応のファイル形式、サイズ超過（10MB）、または不正な mode
           content:
             application/json:
               schema:
@@ -114,6 +177,9 @@ paths:
                 tooLarge:
                   value:
                     detail: File too large (max 10MB)
+                invalidMode:
+                  value:
+                    detail: "Invalid mode: foo"
         "503":
           description: Gemini API が一時的に利用できない
           content:
@@ -129,17 +195,52 @@ components:
   schemas:
     DetectResponse:
       type: object
-      required: [items, model]
+      description: |
+        両モード共通で `mode` / `items` / `retakeSuggestions` / `model` を返す。
+        `mode=industrial` のとき `items` は常に空配列で（`items` を無条件参照する
+        クライアント対策）、代わりに `classifications` / `volume` / `sceneNote` が入る。
+      required: [mode, items, retakeSuggestions, model]
       properties:
+        mode:
+          type: string
+          description: 実際に適用された判定モード。
+          enum: [general, industrial]
         items:
           type: array
+          description: 検出された品目（`mode=general` のみ。`industrial` では空配列）。
           items:
             $ref: "#/components/schemas/DetectedItem"
+        classifications:
+          type: array
+          description: 産業廃棄物の大分類と構成割合（`mode=industrial` のみ）。
+          items:
+            $ref: "#/components/schemas/IndustrialClassification"
+        volume:
+          description: |
+            堆積全体の体積推定（`mode=industrial` のみ）。
+            推定不能な場合は null。
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/VolumeEstimate"
+        sceneNote:
+          type: string
+          description: 堆積全体の状況の短い説明（`mode=industrial` のみ）。
+        retakeSuggestions:
+          type: array
+          description: |
+            判定を確定しづらい箇所を示す追加撮影ガイド。**最大 3 件**。
+            確実に判断できている場合は空配列。
+            ここで示された箇所を撮り直して `additional` に渡すと再推定される。
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/RetakeSuggestion"
         model:
           type: string
-          description: 推論に使用したモデル名。
+          description: |
+            推論に使用したモデル名。
+            primary が失敗した場合 fallback の値が入る。
           enum:
-            - gemini-3.1-flash-lite
+            - gemini-3.5-flash
             - gemini-2.5-flash-lite
 
     DetectedItem:
@@ -152,7 +253,9 @@ components:
           description: 検出順の ID（0 始まり）。
         name:
           type: string
-          description: カテゴリ名のみ（例 "冷蔵庫"）。型番・メーカーは含まない。
+          description: |
+            カテゴリ名のみ（例 "冷蔵庫"）。型番・メーカーは含まない。
+            **単数**であり、品目候補の配列は返さない。
         info:
           type: string
           description: |
@@ -194,9 +297,116 @@ components:
           type: string
           description: 形状・用途の説明のみ（型番・メーカー・年式は含まない）。
 
+    IndustrialClassification:
+      type: object
+      description: |
+        産業廃棄物の大分類 1 件。分類体系は JWNET 分類コード表の大分類（32 分類）で、
+        実装の単一ソースは `ImageModel/image-model/app/industrial.py` の
+        `INDUSTRIAL_CATEGORIES`。
+        ※ glossary.md の「産業廃棄物の20分類」（法定分類）とは別体系。
+      required: [majorCategory, code, ratio, confidence]
+      properties:
+        majorCategory:
+          type: string
+          description: 産業廃棄物の大分類名。
+          enum:
+            - 燃え殻
+            - 汚泥
+            - 廃油
+            - 廃酸
+            - 廃アルカリ
+            - 廃プラスチック類
+            - 紙くず
+            - 木くず
+            - 繊維くず
+            - 動植物性残さ
+            - ゴムくず
+            - 金属くず
+            - ガラスくず、コンクリートくず及び陶磁器くず
+            - 鉱さい
+            - がれき類
+            - 動物のふん尿
+            - 動物の死体
+            - ばいじん
+            - 処分するために処理したもの（13号廃棄物）
+            - 建設混合廃棄物
+            - 安定型混合廃棄物
+            - 管理型混合廃棄物
+            - シュレッダーダスト
+            - 石綿含有産業廃棄物
+            - 水銀使用製品産業廃棄物
+            - 水銀含有ばいじん等
+            - 廃自動車
+            - 廃電気機械器具
+            - 医療用計測器類
+            - 廃電池類
+            - 複合材
+            - 動物系固形不要物
+        code:
+          type: string
+          description: JWNET 分類コード（7 桁）。例 "0600000"。
+          pattern: "^[0-9]{7}$"
+        ratio:
+          type: integer
+          description: |
+            堆積全体に占めるおおよその体積割合（%）。5% 刻み。
+            合計が 80〜120 の範囲なら 100 に比例再正規化される。
+            大きく外れた場合はモデルの誤りを隠さないため生値のまま返る。
+          minimum: 0
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        evidence:
+          type: string
+          description: その分類と判断した視覚的根拠（1文）。判断材料が無い場合は空文字。
+
+    VolumeEstimate:
+      type: object
+      description: 堆積全体の体積推定。写り込んだ寸法既知の物体をスケール参照にする。
+      required: [min, max, unit, basis]
+      properties:
+        min:
+          type: number
+          description: 体積レンジの下限。
+          minimum: 0
+        max:
+          type: number
+          description: 体積レンジの上限。
+          minimum: 0
+        unit:
+          type: string
+          enum: [m3]
+        basis:
+          type: string
+          description: 推定根拠。スケール参照に使った物体と概算方法。
+        referenceObjects:
+          type: array
+          description: スケール参照に使った写り込み物体名（例 木製パレット、200Lドラム缶、人、トラック）。
+          items:
+            type: string
+
+    RetakeSuggestion:
+      type: object
+      description: |
+        追加撮影を促す領域 1 件。`instruction` 欠落・不正な領域・画面ほぼ全域の
+        領域はサーバ側でドロップされる。
+      required: [id, region, instruction]
+      properties:
+        id:
+          type: integer
+          description: 1 始まりの連番。
+        region:
+          $ref: "#/components/schemas/BBox"
+        reason:
+          type: string
+          description: その箇所で分類・体積・品目を確定しづらい理由（1文）。
+        instruction:
+          type: string
+          description: 排出者へ向けた追加撮影の指示。
+
     BBox:
       type: object
-      description: バウンディングボックス。画像の幅/高さに対する % 座標（0–100、小数第1位）。
+      description: 領域。画像の幅/高さに対する % 座標（0–100、小数第1位）。
       required: [x, y, width, height]
       properties:
         x:
