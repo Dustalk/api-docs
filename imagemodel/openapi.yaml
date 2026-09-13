@@ -4,7 +4,7 @@
 openapi: 3.0.3
 info:
   title: ImageModel API（画像物体検出・産廃分類）
-  version: 1.1.0
+  version: 1.3.0
   description: |
     画像から回収対象品目または産業廃棄物の構成を判定する REST API。
 
@@ -16,7 +16,8 @@ info:
     両モードとも、判定が曖昧な箇所を示す `retakeSuggestions` を返す。
     追加撮影した写真を `additional` で渡すと、主写真と統合して再推定する。
 
-    内部は Google Gemini（primary: gemini-3.5-flash / fallback: gemini-2.5-flash-lite）。
+    内部は Google Gemini（primary: gemini-3.7-flash / fallback: gemini-3.6-flash）。
+    モデル名の正は ImageModel の `app/models.py`（ADR-002）。
     本体実装は `ImageModel/image-model`（FastAPI, Python 3.12, port 8080）。
 
     ## 呼び出し経路
@@ -36,10 +37,34 @@ servers:
   - url: https://jvxqvfx3pv.ap-northeast-1.awsapprunner.com
     description: Production（AWS App Runner, ap-northeast-1）
 
-# 認証なし（パブリック）。サーバ側 CORS で許可 Origin を制限する。
-security: []
+# `API_KEY` が設定されているときだけ `X-API-Key` を要求する（未設定なら認証なし）。
+# ブラウザで動くテスト UI はシークレットを持てないため、同一オリジンからの
+# 呼び出しは鍵なしでも許可される。
+security:
+  - ApiKeyAuth: []
+  - {}
 
 paths:
+  /health:
+    get:
+      summary: ヘルスチェック
+      description: |
+        Gemini は叩かない。App Runner のヘルスチェックはここへ向ける。
+        既定の `/` はテスト UI の HTML をディスクから読んで返すため向かない。
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
   /api/detect:
     post:
       summary: 画像から品目を検出 / 産業廃棄物を分類
@@ -63,6 +88,8 @@ paths:
                   description: |
                     判定対象の主写真。
                     対応形式: image/jpeg, image/png, image/gif, image/webp。最大 10MB。
+                    **主写真と追加写真の合計は 12MB まで**（base64 で 4/3 倍になるため、
+                    Gemini のリクエスト上限から逆算した値）。超えると 400。
                 mode:
                   type: string
                   description: |
@@ -70,12 +97,24 @@ paths:
                     `industrial` は産業廃棄物の大分類・構成割合・堆積体積。
                   enum: [general, industrial]
                   default: general
+                municipality:
+                  type: string
+                  description: |
+                    **プロトタイプ。** 指定すると各品目に実寸推定
+                    （`estimatedDimensions`）と自治体品目への解決結果
+                    （`municipality`）を付ける。出力トークンが増えるので既定では付けない。
+                    現在の対応値は `fukuoka` のみ。他の値は 400。
+                    空文字（既定）なら両フィールドとも `null`。
+                  enum: [fukuoka]
                 additional:
                   type: array
+                  maxItems: 3
                   description: |
-                    同じ対象を別角度から撮り直した追加写真（任意・複数可）。
+                    同じ対象を別角度から撮り直した追加写真（任意・最大 3 枚）。
                     指定すると主写真と統合して再推定する。
                     座標（bbox / region）は常に主写真を基準に返る。
+                    `retakeSuggestions` が最大 3 件なので枚数もそれに揃えてある。
+                    4 枚以上は 400。
                   items:
                     type: string
                     format: binary
@@ -108,7 +147,7 @@ paths:
                           width: 45.2
                           height: 60.8
                     retakeSuggestions: []
-                    model: gemini-3.5-flash
+                    model: gemini-3.7-flash
                 nonAppliance:
                   summary: 家具など（mode=general・属性は空文字・追加撮影ガイドあり）
                   value:
@@ -138,7 +177,7 @@ paths:
                           height: 30.0
                         reason: 奥の家電の銘板が見えず型番を読み取れない
                         instruction: 奥の家電に近づいて正面から撮影してください
-                    model: gemini-3.5-flash
+                    model: gemini-3.7-flash
                 industrial:
                   summary: 産業廃棄物モード（mode=industrial）
                   value:
@@ -163,7 +202,7 @@ paths:
                       referenceObjects: [木製パレット, ブロック塀]
                     sceneNote: 屋外の集積場に混合廃棄物が山積みされている
                     retakeSuggestions: []
-                    model: gemini-3.5-flash
+                    model: gemini-3.7-flash
         "400":
           description: 非対応のファイル形式、サイズ超過（10MB）、または不正な mode
           content:
@@ -180,8 +219,32 @@ paths:
                 invalidMode:
                   value:
                     detail: "Invalid mode: foo"
+        "401":
+          description: API キーが必要（`API_KEY` 設定時のみ）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: safety filter 等でモデルが結果を返さなかった（再送しても同じ）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: 上流（Gemini）のレート制限。retryable は true。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: 上流の異常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
-          description: Gemini API が一時的に利用できない
+          description: Gemini API が一時的に利用できない（鎖の全モデルが応答せず）
           content:
             application/json:
               schema:
@@ -189,9 +252,26 @@ paths:
               examples:
                 upstream:
                   value:
-                    detail: Gemini API が一時的に利用できません。しばらくして再度お試しください。
+                    detail: Gemini API が一時的に利用できません。しばらく待ってから再試行してください。
+                    code: upstream_unavailable
+                    retryable: true
+        "504":
+          description: タイムアウト予算（45 秒）を使い切った
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        サーバに `API_KEY` が設定されているときのみ必要。
+        ブラウザからは同一オリジンなら鍵なしで呼べる。
+
   schemas:
     DetectResponse:
       type: object
@@ -199,7 +279,7 @@ components:
         両モード共通で `mode` / `items` / `retakeSuggestions` / `model` を返す。
         `mode=industrial` のとき `items` は常に空配列で（`items` を無条件参照する
         クライアント対策）、代わりに `classifications` / `volume` / `sceneNote` が入る。
-      required: [mode, items, retakeSuggestions, model]
+      required: [mode, items, retakeSuggestions, model, image]
       properties:
         mode:
           type: string
@@ -225,6 +305,12 @@ components:
         sceneNote:
           type: string
           description: 堆積全体の状況の短い説明（`mode=industrial` のみ）。
+        image:
+          description: |
+            サーバが実際に判定に使った画像のメタ情報。bbox の % を px に直すときの
+            検算に使える。v1.2.0 で追加（additive）。
+          allOf:
+            - $ref: "#/components/schemas/ImageMeta"
         retakeSuggestions:
           type: array
           description: |
@@ -250,7 +336,10 @@ components:
       properties:
         id:
           type: integer
-          description: 検出順の ID（0 始まり）。
+          description: |
+            **このレスポンス内でのみ有効な連番。** 再リクエスト間で同一の物体を
+            指す保証はない（`additional` を足して再推定すると、品目の分割の仕方
+            自体が変わる）。クライアントは再解析結果を新しい集合として扱うこと。
         name:
           type: string
           description: |
@@ -268,6 +357,103 @@ components:
           description: 可視化用カラーコード（例 "#e74c3c"）。サーバ側のローテーション配列から付与。
         bbox:
           $ref: "#/components/schemas/BBox"
+        fullFrame:
+          type: boolean
+          default: false
+          description: |
+            box が画面のほぼ全面（面積 95% 超）を覆っている。
+            **1 品目を寄って撮った写真では正常に立つ。**
+            画像全体を 1 物体として返した誤検出のこともあるので、
+            これが唯一の検出なら追加撮影を促す余地がある。
+            以前はこの条件の唯一の検出をサーバ側で捨てていたが、
+            評価セット 139 枚で 15 枚（11%）が該当し、うち 3 枚は正しい検出だった
+            （レンガ・電気ケトル・ゴルフクラブ）ため、捨てずに印を返す方式に変えた。
+        estimatedDimensions:
+          description: |
+            **`municipality` 指定時のみ。** モデルによる実寸推定。
+            推定できなければ各値 0、`confidence` は `low`。
+            指定しなければ `null`。
+          oneOf:
+            - $ref: "#/components/schemas/EstimatedDimensions"
+            - type: "null"
+        municipality:
+          description: |
+            **`municipality` 指定時のみ。** 自治体品目への解決結果。
+            該当する品目が無ければ `null`（＝対象外。UI 側でそう出す）。
+            指定しなければ `null`。
+          oneOf:
+            - $ref: "#/components/schemas/MunicipalityResolution"
+            - type: "null"
+
+    EstimatedDimensions:
+      type: object
+      description: |
+        モデルが画像内の既知サイズの物体（ドア・畳・人・コンセントなど）を
+        スケール参照にして推定した実寸。**しきい値の適用はサーバ側で行う**ので、
+        モデルには自治体固有の基準を渡していない。
+      required: [heightCm, widthCm, confidence]
+      properties:
+        heightCm:
+          type: number
+          description: 推定の高さ(cm)。推定できなければ 0。
+        widthCm:
+          type: number
+          description: 推定の幅(cm)。推定できなければ 0。
+        depthCm:
+          type: number
+          description: 推定の奥行(cm)。推定できなければ 0。
+        confidence:
+          type: string
+          enum: [high, medium, low]
+          description: |
+            **モデルの自己申告であり較正されていない。**
+            スケール参照物が無い写真でも high が返ることがある。
+            料金の分岐に直接使わないこと。
+        basis:
+          type: string
+          description: スケール参照に使った物体（例 "ドア"、"畳"）。
+
+    MunicipalityResolution:
+      type: object
+      description: |
+        **プロトタイプ。** 検出した物体を自治体の品目候補に解決した結果。
+        本番ではこの解決は Dustalk 側（品目マスタを持つ側）で行い、
+        ImageModel は検出語彙・bbox・estimatedDimensions までを返す想定。
+        **手数料・排出方法は含めない。** 自治体マスタを持つ側が付ける。
+      required: [word, wasteCategory, candidates]
+      properties:
+        word:
+          type: string
+          description: 自治体の品目表の語に寄せた結果。
+        wasteCategory:
+          type: string
+          description: 自治体の分別区分（例 "粗大ごみ"）。
+        candidates:
+          type: array
+          description: |
+            品目候補。推定寸法を満たすものが先頭に来る。**1 件なら特定できている。**
+            `本棚（高さ1m以上・横幅1m以上）` と `本棚（高さ1m未満・横幅1m未満）` は
+            自治体の品目表では別の品目なので、写真から「本棚」まで特定できても
+            候補が 1 つに絞れないことがある。
+          items:
+            $ref: "#/components/schemas/ItemCandidate"
+
+    ItemCandidate:
+      type: object
+      required: [itemName]
+      properties:
+        itemName:
+          type: string
+          description: 自治体の品目表そのままの名称。
+        conditions:
+          type: array
+          description: その品目に付く条件（素材・寸法など）。
+          items:
+            type: string
+        matchesDimensions:
+          type: boolean
+          default: false
+          description: 推定寸法がこの候補の寸法条件を**すべて**満たしているか。
 
     DetectedAttributes:
       type: object
@@ -406,7 +592,14 @@ components:
 
     BBox:
       type: object
-      description: 領域。画像の幅/高さに対する % 座標（0–100、小数第1位）。
+      description: |
+        領域。**EXIF orientation 適用後（＝ブラウザが表示する向き）**の画像の
+        幅/高さに対する % 座標（0–100、小数第1位）。原点は左上。
+
+        サーバは Gemini に渡す前に向きを揃える（`app/imaging.normalize_image`）。
+        クライアントは撮影された元ファイルをそのまま `<img>` に描き、% をそのまま
+        CSS の `left/top/width/height` に当てればよい（ブラウザは EXIF を自動適用する）。
+        実測の根拠は ImageModel の `docs/api-behavior-report.md` §3。
       required: [x, y, width, height]
       properties:
         x:
@@ -422,11 +615,39 @@ components:
           type: number
           description: 高さ（%）。
 
+    ImageMeta:
+      type: object
+      description: |
+        判定に使われた画像のメタ情報。寸法は **表示向き**（EXIF orientation 適用後）。
+      required: [width, height, orientationNormalized]
+      properties:
+        width:
+          type: integer
+          description: 表示向きでの幅（px）。判定できなかった場合は 0。
+        height:
+          type: integer
+          description: 表示向きでの高さ（px）。判定できなかった場合は 0。
+        orientationNormalized:
+          type: boolean
+          description: |
+            サーバが EXIF orientation を適用したか。true のとき width/height は
+            適用後の値（元ファイルの格納寸法とは縦横が入れ替わっている）。
+
     Error:
       type: object
-      description: FastAPI 標準のエラー body。
+      description: |
+        エラー body。`detail` は FastAPI 標準形（既存クライアント互換）。
+        `code` / `retryable` は上流起因のエラーにのみ付き、クライアントが
+        再送の可否を判断するために使う。400/401/422 の入力起因エラーには付かない。
       required: [detail]
       properties:
         detail:
           type: string
           description: 人が読めるエラーメッセージ。
+        code:
+          type: string
+          description: 機械可読なエラーコード。
+          enum: [upstream_error, upstream_unavailable, rate_limited, upstream_timeout, content_blocked]
+        retryable:
+          type: boolean
+          description: 同じリクエストを再送してよいか。
