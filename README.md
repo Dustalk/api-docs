@@ -1,4 +1,4 @@
-# dustalk-api — Dustalk 連携 API 仕様
+# api-docs — Dustalk 連携 API 仕様
 
 PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認識）が **Dustalk 本体**や
 相互に対して呼ぶ API 契約（OpenAPI）を**集約・公開**するリポジトリです。実装コードは含みません。
@@ -10,10 +10,10 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 
 `main` へ push すると GitHub Actions が Redoc をビルドし GitHub Pages に公開します。
 
-- 一覧: https://developerunion.github.io/dustalk-api/
-- 電話: https://developerunion.github.io/dustalk-api/phone/
-- チャット: https://developerunion.github.io/dustalk-api/chat/
-- 画像認識: https://developerunion.github.io/dustalk-api/imagemodel/
+- 一覧: https://dustalk.github.io/api-docs/
+- 電話: https://dustalk.github.io/api-docs/phone/
+- チャット: https://dustalk.github.io/api-docs/chat/
+- 画像認識: https://dustalk.github.io/api-docs/imagemodel/
 
 > 初回のみ: **Settings → Pages → Source = GitHub Actions** を有効化。
 
@@ -59,7 +59,7 @@ PhoneAgent 経路と DustalkChat 経路は同一ドメイン（回収申し込�
 .venv/bin/python -m scripts.gen_api_models
 .venv/bin/python -m scripts.gen_api_models --check   # 差分（再生成漏れ）検出
 
-# dustalk-api リポにて
+# api-docs リポにて
 git add phone && git commit -m "chore: regenerate phone OpenAPI" && git push
 ```
 

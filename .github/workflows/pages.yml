@@ -2,7 +2,7 @@ name: Pages
 
 # 各サービスの OpenAPI (phone / chat / imagemodel) を Redoc でビルドし
 # GitHub Pages に公開する。
-# 公開URL: https://developerunion.github.io/dustalk-api/
+# 公開URL: https://dustalk.github.io/api-docs/
 #
 # 初回のみリポジトリ設定が必要:
 #   Settings → Pages → Source = "GitHub Actions"
@@ -28,6 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      # job 側の permissions は workflow 側を**置き換える**（足し算ではない）。
+      # contents: read を書き忘れると checkout がトークン無しで走り、
+      # private リポジトリでは "Repository not found" で落ちる。
+      # lint job は workflow 側を継承するので通り、ここだけ落ちていた。
+      contents: read
       pages: write
       id-token: write
     environment:
