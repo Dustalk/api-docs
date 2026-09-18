@@ -1,6 +1,6 @@
 name: Pages
 
-# 各サービスの OpenAPI (phone / chat / imagemodel) を Redoc でビルドし
+# 各サービスの OpenAPI (phone / chat / imagemodel / gis) を Redoc でビルドし
 # GitHub Pages に公開する。
 # 公開URL: https://dustalk.github.io/api-docs/
 #
@@ -43,10 +43,11 @@ jobs:
 
       - name: Build Redoc docs
         run: |
-          mkdir -p site/phone site/chat site/imagemodel
+          mkdir -p site/phone site/chat site/imagemodel site/gis
           npx -y @redocly/cli@latest build-docs phone@v1      -o site/phone/index.html
           npx -y @redocly/cli@latest build-docs chat@v1       -o site/chat/index.html
           npx -y @redocly/cli@latest build-docs imagemodel@v1 -o site/imagemodel/index.html
+          npx -y @redocly/cli@latest build-docs gis@v1        -o site/gis/index.html
           cat > site/index.html <<'HTML'
           <!doctype html><meta charset="utf-8">
           <title>Dustalk 連携 API</title>
@@ -55,6 +56,7 @@ jobs:
             <li><a href="./phone/">電話経路 (PhoneAgent → Dustalk・暫定)</a></li>
             <li><a href="./chat/">チャット経路 (DustalkChat → Dustalk・暫定)</a></li>
             <li><a href="./imagemodel/">ImageModel (DustalkChat → 画像認識・実装済)</a></li>
+            <li><a href="./gis/">GIS (Dustalk → 回収可否判定・実装済)</a></li>
           </ul>
           HTML
 

@@ -1,0 +1,315 @@
+# GIS（回収可否判定）の API 契約。手動管理。
+# 本体: Dustalk/gis（web/ = Next.js / AWS App Runner、判定 = AWS Lambda）。
+# Dustalk 本体のサーバが依頼時に判定を起こし、回収業者の画面が iframe で結果を出す。
+openapi: 3.0.3
+info:
+  title: GIS API（現場の回収可否判定）
+  version: 1.0.0
+  description: |
+    住所の現場に、どの大きさの回収車（軽・2t・4t）が乗り付けられるかを判定する。
+    前面道路の幅員と進入経路を、国土地理院・PLATEAU・OpenStreetMap のデータから測る。
+
+    ## Dustalk 本体との連携
+
+    1. **依頼者が依頼を出したとき**、本体のサーバが `POST /api/sites` を叩く。
+       判定が裏で走り始める（100 秒前後）。**返事は読まなくてよい。**
+    2. **回収業者が住所をタップしたとき**、同じ値で組んだ `GET /embed` を iframe で
+       開く。現場の詳細だけが出る（一覧などには出ていかない）。まだ判定中なら
+       「判定中」を出し、終わり次第切り替わる。
+
+    `POST /api/sites` を呼べなかったときも、`/embed` を開いた時点で判定が始まる
+    （先回りできないだけで、壊れはしない）。
+
+    ## 住所は本体側で確定させる
+
+    `place_id` と座標は、本体が **Google Places で確定させた値**をそのまま渡すこと。
+    GIS は住所文字列から座標を引き直さない。引き直すと数十m ずれ、前面道路を
+    取り違えて判定そのものが狂う。
+
+    現場の照合は **`place_id` → 住所文字列のハッシュ** の順。住所文字列の組み立て方が
+    本体と GIS で違っても、`place_id` があれば同じ現場に当たる。
+
+    ## 判定は現場につき1回
+
+    同じ依頼を何度送っても、判定中に `/embed` を開いても、判定は二重に走らない。
+    失敗した判定と、15 分以上止まった判定だけは、依頼を送り直せばやり直す。
+
+    ## 対応範囲
+
+    判定できるのは、地図データを取り込んだ地域だけ（2026-09 時点で青森県・岩手県・
+    秋田県・山形県・福岡県の全域）。範囲外は `POST /api/sites` が 422 `unsupported` を返す。
+
+    ## 現在の状態
+
+    - **Basic 認証は本番で無効**（誰でも叩ける）。有効にしても、本体のサーバは
+      Bearer トークンで `/api/` を通れる
+    - `/embed` は Basic 認証の対象外。埋め込みを許す親オリジンは GIS 側の
+      `GIS_EMBED_ORIGINS` で絞る（`Content-Security-Policy: frame-ancestors`）。
+      **これはアクセス制御ではない**（URL を直接開けば見える）
+    - 実証中。画面には「テスト中」と出典（PLATEAU は CC BY 4.0）が出る
+
+    実装と詳しい経緯は Dustalk/gis の README「他システムへの埋め込み」。
+
+servers:
+  - url: https://{host}
+    description: App Runner の URL（Terraform の `terraform output web_url`）。本体では環境変数に持たせ、直書きしない
+    variables:
+      host:
+        default: xxxxxxxx.ap-northeast-1.awsapprunner.com
+
+tags:
+  - name: judge
+    description: 判定の依頼（サーバから）
+  - name: pages
+    description: 画面（iframe・リンク）
+
+paths:
+  /api/sites:
+    post:
+      tags: [judge]
+      operationId: requestJudge
+      summary: 現場の判定を依頼する
+      description: |
+        判定を起こして即座に返る（判定そのものは Lambda で非同期に走る）。
+        台帳にあれば判定は起こさず `done` を返す。
+
+        GIS の画面（現場の追加）も同じエンドポイント・同じ本文で呼ぶ。
+
+        **返事は読まなくてよい。** 読むなら意味があるのは `unsupported` で、
+        iframe を出す前に対応範囲外だと分かる。
+      security:
+        - BearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteRequest"
+            example:
+              address: 東京都墨田区押上1-1-2
+              components:
+                placeId: ChIJ...
+                lat: 35.7100
+                lng: 139.8107
+      responses:
+        "200":
+          description: 台帳にある（判定済み）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+              example: { id: faff6fb8a9, status: done }
+        "202":
+          description: 判定が走っている。同じ依頼を何度送っても二重には走らない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+              example: { id: 1d0219007f, status: processing }
+        "400":
+          description: 本文が不正（住所が空、`components.lat` / `lng` が無い）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Basic 認証が有効で、Bearer トークンが無いか一致しない
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 認証が必要です
+        "422":
+          description: |
+            判定を起こせなかった。
+            - `unsupported`: 対応範囲外。判定は起こしていない
+            - `failed`: 判定に失敗した（GIS の手元開発で同期判定したときのみ。本番は `processing` で返る）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteRejected"
+              example:
+                status: unsupported
+                error: "この地点の地図データをまだ取り込んでいません。対応範囲: 青森県・岩手県・秋田県・山形県・福岡県の全域"
+        "500":
+          description: 判定を起動できなかった（Lambda の呼び出しに失敗など）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /embed:
+    get:
+      tags: [pages]
+      operationId: embedSite
+      summary: 現場の判定結果を iframe で出す
+      description: |
+        **HTML を返す画面。** 回収業者の画面に iframe で埋め込む。
+
+        ```html
+        <iframe
+          src="{BASE}/embed?place_id=ChIJ...&lat=35.7100&lng=139.8107&address=東京都墨田区押上1-1-2"
+          loading="lazy" style="width:100%;border:0"></iframe>
+        ```
+
+        値は `POST /api/sites` に送ったものと同じにする（URL エンコードすること）。
+
+        | 状況 | 表示 |
+        |---|---|
+        | 判定済み | 車両別の乗り付け可否・3D モデル・写真・根拠・建物・フィードバック |
+        | 判定中 | 「判定中」。終わり次第この枠の中で結果に切り替わる |
+        | 台帳にもジョブにも無い | 開いた時点で判定を起こし、「判定中」を出す |
+        | 判定に失敗 | 理由を出す（開くたびに判定し直すことはしない。やり直しは依頼の送り直し） |
+        | 対応範囲外の地域 | 写真・地図を参考として出す（乗り付け可否は出さない） |
+
+        再判定・削除など現場を変える操作は出さない。地図のリンクだけは別タブで開く。
+
+        ## 高さ
+
+        中身の高さは変わるので、iframe から親へ `postMessage` で知らせる。
+        親は次のように受けて iframe の高さを合わせる。
+
+        ```js
+        window.addEventListener("message", (e) => {
+          if (e.origin !== GIS_ORIGIN) return;   // 必ず検証する
+          if (e.data?.type === "dustalk-gis:height") iframe.style.height = `${e.data.height}px`;
+        });
+        ```
+
+        ## 埋め込める親
+
+        GIS 側の `GIS_EMBED_ORIGINS` に登録したオリジンだけ。未登録の親からはブラウザが
+        表示を拒む。
+      security: []
+      parameters:
+        - name: place_id
+          in: query
+          description: Google Place ID。照合の第一の鍵なので、持っていれば必ず付ける
+          schema: { type: string }
+        - name: lat
+          in: query
+          description: 緯度。未判定のとき判定を起こすのに使う
+          schema: { type: number }
+        - name: lng
+          in: query
+          description: 経度。未判定のとき判定を起こすのに使う
+          schema: { type: number }
+        - name: address
+          in: query
+          description: 住所。place_id を持たない現場への照合と、判定の依頼に使う
+          schema: { type: string }
+      responses:
+        "200":
+          description: 埋め込み用の画面
+          content:
+            text/html:
+              schema: { type: string }
+
+  /lookup:
+    get:
+      tags: [pages]
+      operationId: lookupAddress
+      summary: 住所文字列だけで現場ページを開く（リンク用）
+      description: |
+        **HTML を返す画面。iframe には入れられない**（`frame-ancestors 'none'`）。
+        座標も place_id も持たない連携先が、リンクで GIS の現場ページへ送るための入口。
+
+        ```html
+        <a href="{BASE}/lookup?address=北九州市八幡西区黒崎3-15-3">回収可否を見る</a>
+        ```
+
+        GIS 側で住所をジオコーディングし、建物単位で1件に決まれば現場ページ
+        （`/sites/{id}`）へ移る。決まらなければ候補を出して選ばせる。
+        本体との連携では使わない（`/embed` を使う）。GIS の Basic 認証を有効にすると、
+        ここは認証ダイアログが出る（人がブラウザで開く前提なので、それで足りる）。
+      security: []
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 住所。正規化不要（都道府県や丁目が無くてもよい）
+          schema: { type: string }
+      responses:
+        "200":
+          description: 判定中・候補選択・見つからないときの画面
+          content:
+            text/html:
+              schema: { type: string }
+        "307":
+          description: 判定済みの現場ページへ移る
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        GIS の `INTERNAL_API_TOKEN`（SSM `/gis/prod/INTERNAL_API_TOKEN`）。本体のサーバに
+        同じ値を環境変数で持たせる。通るのは `/api/` だけで、GIS の画面は開けない。
+        GIS の Basic 認証が無効な間（2026-09 時点の本番）は無くても通る。
+
+  schemas:
+    SiteRequest:
+      type: object
+      required: [address, components]
+      properties:
+        address:
+          type: string
+          description: 住所。本体の依頼の `address` をそのまま渡す
+        components:
+          $ref: "#/components/schemas/AddressComponents"
+
+    AddressComponents:
+      type: object
+      description: |
+        本体の `AddressComponents`（`../chat/openapi.chat.yaml`）そのもの。依頼の
+        `addressComponents` をそのまま転送すればよい。GIS が読むのは
+        `placeId`・`lat`・`lng` だけで、残りは無視する。
+      required: [lat, lng]
+      additionalProperties: true
+      properties:
+        placeId:
+          type: string
+          description: Google Place ID。照合の第一の鍵なので、持っていれば必ず付ける
+        lat:
+          type: number
+          description: Places で確定した緯度
+        lng:
+          type: number
+          description: Places で確定した経度
+
+    SiteAccepted:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          description: |
+            GIS の現場 ID。本体が保存する必要はない（`/embed` は依頼の値で引ける）。
+            座標が一致する既存の現場に吸収されると、住所から決まる ID とは別になる
+        status:
+          type: string
+          enum: [done, processing]
+
+    SiteRejected:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          type: string
+          enum: [unsupported, failed]
+        id:
+          type: string
+          description: "`failed` のときだけ"
+        error:
+          type: string
+          description: 理由。利用者にそのまま見せてよい日本語
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 理由。利用者にそのまま見せてよい日本語

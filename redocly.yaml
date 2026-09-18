@@ -1,4 +1,4 @@
-# Redocly 設定: Dustalk 連携 API ドキュメント (phone / chat / imagemodel)。
+# Redocly 設定: Dustalk 連携 API ドキュメント (phone / chat / imagemodel / gis)。
 # プレビュー: npx @redocly/cli preview-docs phone@v1
 # 検証:      npx @redocly/cli lint
 apis:
@@ -8,6 +8,8 @@ apis:
     root: chat/openapi.chat.yaml
   imagemodel@v1:
     root: imagemodel/openapi.yaml
+  gis@v1:
+    root: gis/openapi.yaml
 
 rules:
   # 暫定仕様 (phone/chat) を含むため、運用ルールは緩める。
