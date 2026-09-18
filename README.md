@@ -1,10 +1,10 @@
 # api-docs — Dustalk 連携 API 仕様
 
-PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認識）が **Dustalk 本体**や
-相互に対して呼ぶ API 契約（OpenAPI）を**集約・公開**するリポジトリです。実装コードは含みません。
+PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認識）・GIS（回収可否判定）と
+**Dustalk 本体**が相互に呼ぶ API 契約（OpenAPI）を**集約・公開**するリポジトリです。実装コードは含みません。
 
 > **契約の正本は各 OpenAPI ファイル**（機械可読）。エンドポイント・認証は **暫定**
-> （Dustalk バックエンド確定後に更新）。ImageModel は**実装済みの稼働サービス**。
+> （Dustalk バックエンド確定後に更新）。ImageModel と GIS は**実装済みの稼働サービス**。
 
 ## 公開ドキュメント（URL）
 
@@ -14,6 +14,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 - 電話: https://dustalk.github.io/api-docs/phone/
 - チャット: https://dustalk.github.io/api-docs/chat/
 - 画像認識: https://dustalk.github.io/api-docs/imagemodel/
+- 回収可否判定: https://dustalk.github.io/api-docs/gis/
 
 > 初回のみ: **Settings → Pages → Source = GitHub Actions** を有効化。
 
@@ -22,7 +23,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 ```
 .
 ├── README.md                     ← このファイル（索引）
-├── redocly.yaml                  ← 3 サービスの定義（lint / build-docs）
+├── redocly.yaml                  ← 4 サービスの定義（lint / build-docs）
 ├── .github/workflows/pages.yml   ← Redoc ビルド → Pages 公開
 ├── phone/                        ← PhoneAgent（電話）→ Dustalk 本体（暫定・自動生成）
 │   ├── openapi.yaml              ← OpenAPI 3.1（paths へ $ref）
@@ -30,7 +31,9 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 │   └── components/schemas.yaml
 ├── chat/                         ← DustalkChat（チャット）→ Dustalk 本体（暫定）
 │   └── openapi.chat.yaml         ← OpenAPI 3.0.3
-└── imagemodel/                   ← DustalkChat → ImageModel（画像認識・実装済）
+├── imagemodel/                   ← DustalkChat → ImageModel（画像認識・実装済）
+│   └── openapi.yaml              ← OpenAPI 3.0.3
+└── gis/                          ← Dustalk 本体 → GIS（回収可否判定・実装済）
     └── openapi.yaml              ← OpenAPI 3.0.3
 ```
 
@@ -41,6 +44,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 | **PhoneAgent（電話）** → Dustalk 本体 | [`phone/openapi.yaml`](phone/openapi.yaml)（3.1） | 暫定 | `PhoneAgent/phone-agent/server/models.py`（Pydantic）から自動生成。`python -m scripts.gen_api_models`。手動編集不可 |
 | **DustalkChat（チャット）** → Dustalk 本体 | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml)（3.0.3） | 暫定 | `DustalkChat/dustalk-chat/src/lib/slots/types.ts` の `Slots` 型を起点に手動 |
 | **DustalkChat** → ImageModel（画像認識） | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml)（3.0.3） | 実装済 | `ImageModel/image-model` 実装を起点に手動 |
+| **Dustalk 本体** → GIS（回収可否判定） | [`gis/openapi.yaml`](gis/openapi.yaml)（3.0.3） | 実装済 | `DriverApplication/driver-application`（Dustalk/gis）の実装を起点に手動 |
 
 PhoneAgent 経路と DustalkChat 経路は同一ドメイン（回収申し込み）の別表現。チャット経路の方が
 情報量が多い（品目ごとの依頼先・希望時間帯・構造化住所）。**将来は単一契約への収斂を想定**。
@@ -68,6 +72,8 @@ git add phone && git commit -m "chore: regenerate phone OpenAPI" && git push
 - PhoneAgent（`phone/openapi.yaml`）: API キー認証 `X-API-Key: <key>`（暫定・未確定）。
 - DustalkChat → Dustalk 本体（`chat/openapi.chat.yaml`）: Bearer トークン（暫定・未確定）。
 - DustalkChat → ImageModel（`imagemodel/openapi.yaml`）: **認証なし**（パブリック、CORS で Origin 制限）。
+- Dustalk 本体 → GIS（`gis/openapi.yaml`）: `POST /api/sites` は Bearer トークン（GIS の
+  `INTERNAL_API_TOKEN`）。iframe の `/embed` は認証なし（埋め込める親を `frame-ancestors` で制限）。
 
 ## エンドポイント一覧
 
@@ -79,6 +85,7 @@ git add phone && git commit -m "chore: regenerate phone OpenAPI" && git push
 | PhoneAgent | [`phone/openapi.yaml`](phone/openapi.yaml) → `paths/{intakes,requests,customers}.yaml` |
 | DustalkChat | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml) |
 | ImageModel | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml) |
+| GIS | [`gis/openapi.yaml`](gis/openapi.yaml) |
 
 PhoneAgent 経路の各エンドポイントは `submit_intake` / `submit_request` / `look_up` /
 `upsert_customer` の各エージェントツールに対応する（[specs/phone-agent.md](../specs/phone-agent.md)）。
@@ -88,8 +95,8 @@ PhoneAgent 経路の各エンドポイントは `submit_intake` / `submit_reques
 ## ローカルでプレビュー / 検証
 
 ```sh
-npx @redocly/cli preview-docs phone@v1   # ブラウザ表示（phone/chat/imagemodel を指定可）
-npx @redocly/cli lint                    # 3 サービスを検証
+npx @redocly/cli preview-docs phone@v1   # ブラウザ表示（phone/chat/imagemodel/gis を指定可）
+npx @redocly/cli lint                    # 4 サービスを検証
 ```
 
 ## 未実装要求リスト（本体フロー同期に伴うモデル改訂）
