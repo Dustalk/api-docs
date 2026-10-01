@@ -1,10 +1,10 @@
-# このファイルは PhoneAgent の server/models.py から自動生成されています
+# このファイルは PhoneAgent の server/schemas.py から自動生成されています
 # (python -m scripts.gen_api_models)。手動編集は次回生成で上書きされます。
 openapi: 3.1.0
 info:
   title: Dustalk PhoneAgent 連携API (暫定)
   version: 0.1.0
-  description: PhoneAgent (粗大ゴミ電話受付エージェント) が Dustalk 本体に対して呼ぶ API の契約。スキーマは PhoneAgent の server/models.py
+  description: PhoneAgent (粗大ゴミ電話受付エージェント) が Dustalk 本体に対して呼ぶ API の契約。スキーマは PhoneAgent の server/schemas.py
     から自動生成。**エンドポイント・認証・採番は暫定**で、Dustalk バックエンド確定後に更新する。
 servers:
 - url: https://api.dustalk.example/v1

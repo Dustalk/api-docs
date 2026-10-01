@@ -1,4 +1,4 @@
-# このファイルは PhoneAgent の server/models.py から自動生成されています
+# このファイルは PhoneAgent の server/schemas.py から自動生成されています
 # (python -m scripts.gen_api_models)。手動編集は次回生成で上書きされます。
 ApiError:
   description: エラーレスポンス共通 body (暫定)。
