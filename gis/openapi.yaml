@@ -4,35 +4,37 @@
 openapi: 3.0.3
 info:
   title: GIS API（現場の回収可否判定）
-  version: 1.0.0
+  version: 2.0.0
   description: |
     住所の現場に、どの大きさの回収車（軽・2t・4t）が乗り付けられるかを判定する。
     前面道路の幅員と進入経路を、国土地理院・PLATEAU・OpenStreetMap のデータから測る。
 
     ## Dustalk 本体との連携
 
-    1. **依頼者が依頼を出したとき**、本体のサーバが `POST /api/sites` を叩く。
-       判定が裏で走り始める（100 秒前後）。**返事は読まなくてよい。**
-    2. **回収業者が住所をタップしたとき**、同じ値で組んだ `GET /embed` を iframe で
-       開く。現場の詳細だけが出る（一覧などには出ていかない）。まだ判定中なら
+    照合の鍵は **本体の現場 ID（`emission_site.id`、uuid）だけ**。
+
+    1. **依頼者が依頼を出したとき**、本体のサーバが現場 ID と住所を `POST /api/sites`
+       に送る。判定が裏で走り始める（100 秒前後）。**返事は読まなくてよい。**
+    2. **回収業者が見るとき**、同じ現場 ID で `GET /embed/{siteId}` を iframe で開く。
+       現場の詳細だけが出る（一覧などには出ていかない）。まだ判定中なら
        「判定中」を出し、終わり次第切り替わる。
+    3. **判定が回りきらなかったとき**は、業者にはお詫びだけを出す。再試行のボタンも
+       自動の再判定も無い。やり直すには本体が同じ依頼を送り直す。
 
-    `POST /api/sites` を呼べなかったときも、`/embed` を開いた時点で判定が始まる
-    （先回りできないだけで、壊れはしない）。
+    `/embed` では判定を起こさない。`POST /api/sites` を呼べなかった現場は、
+    業者が開いてもお詫びになる。判定の完了を本体に知らせることはしない。
 
-    ## 住所は本体側で確定させる
+    ## 住所
 
-    `place_id` と座標は、本体が **Google Places で確定させた値**をそのまま渡すこと。
-    GIS は住所文字列から座標を引き直さない。引き直すと数十m ずれ、前面道路を
-    取り違えて判定そのものが狂う。
-
-    現場の照合は **`place_id` → 住所文字列のハッシュ** の順。住所文字列の組み立て方が
-    本体と GIS で違っても、`place_id` があれば同じ現場に当たる。
+    本体は **「都道府県＋市区町村以降」を建物名を除いて**送る（`prefecture` +
+    `city_address`）。正規化は要らない。GIS が Google Geocoding で座標を引き、
+    表記の揺れ（全角半角・丁目や番地の書き方）はそこで吸収される。
 
     ## 判定は現場につき1回
 
     同じ依頼を何度送っても、判定中に `/embed` を開いても、判定は二重に走らない。
     失敗した判定と、15 分以上止まった判定だけは、依頼を送り直せばやり直す。
+    同じ `site_id` を別の住所で送ると、新しい住所で判定し直す（URL は変わらない）。
 
     ## 対応範囲
 
@@ -41,8 +43,8 @@ info:
 
     ## 現在の状態
 
-    - **Basic 認証は本番で無効**（誰でも叩ける）。有効にしても、本体のサーバは
-      Bearer トークンで `/api/` を通れる
+    - `site_id` 付きの `POST /api/sites` は Bearer トークンが必須
+    - GIS の画面の Basic 認証は本番で無効
     - `/embed` は Basic 認証の対象外。埋め込みを許す親オリジンは GIS 側の
       `GIS_EMBED_ORIGINS` で絞る（`Content-Security-Policy: frame-ancestors`）。
       **これはアクセス制御ではない**（URL を直接開けば見える）
@@ -71,15 +73,15 @@ paths:
       summary: 現場の判定を依頼する
       description: |
         判定を起こして即座に返る（判定そのものは Lambda で非同期に走る）。
-        台帳にあれば判定は起こさず `done` を返す。
+        台帳にあれば判定は起こさず `done` を返す。住所から座標を引くのは GIS 側。
 
-        GIS の画面（現場の追加）も同じエンドポイント・同じ本文で呼ぶ。
+        GIS の画面（現場の追加）も同じエンドポイントを使う（`site_id` の代わりに
+        座標付きの `components` を送る。本体からは送らなくてよい）。
 
         **返事は読まなくてよい。** 読むなら意味があるのは `unsupported` で、
         iframe を出す前に対応範囲外だと分かる。
       security:
         - BearerAuth: []
-        - {}
       requestBody:
         required: true
         content:
@@ -87,11 +89,8 @@ paths:
             schema:
               $ref: "#/components/schemas/SiteRequest"
             example:
-              address: 東京都墨田区押上1-1-2
-              components:
-                placeId: ChIJ...
-                lat: 35.7100
-                lng: 139.8107
+              site_id: 3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21
+              address: 青森県青森市新町1-1-1
       responses:
         "200":
           description: 台帳にある（判定済み）
@@ -108,22 +107,23 @@ paths:
                 $ref: "#/components/schemas/SiteAccepted"
               example: { id: 1d0219007f, status: processing }
         "400":
-          description: 本文が不正（住所が空、`components.lat` / `lng` が無い）
+          description: 本文が不正（住所が空、`site_id` が uuid でない）
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: Basic 認証が有効で、Bearer トークンが無いか一致しない
+          description: Bearer トークンが無いか一致しない
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: 認証が必要です
+                $ref: "#/components/schemas/Error"
+              example: { error: 認証が必要です }
         "422":
           description: |
             判定を起こせなかった。
             - `unsupported`: 対応範囲外。判定は起こしていない
+            - `unresolved`: 住所から位置を特定できなかった。判定は起こしていない
             - `failed`: 判定に失敗した（GIS の手元開発で同期判定したときのみ。本番は `processing` で返る）
           content:
             application/json:
@@ -133,13 +133,13 @@ paths:
                 status: unsupported
                 error: "この地点の地図データをまだ取り込んでいません。対応範囲: 青森県・岩手県・秋田県・山形県・福岡県の全域"
         "500":
-          description: 判定を起動できなかった（Lambda の呼び出しに失敗など）
+          description: 判定を起動できなかった（Geocoding・Lambda の呼び出しに失敗など）
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /embed:
+  /embed/{siteId}:
     get:
       tags: [pages]
       operationId: embedSite
@@ -149,19 +149,19 @@ paths:
 
         ```html
         <iframe
-          src="{BASE}/embed?place_id=ChIJ...&lat=35.7100&lng=139.8107&address=東京都墨田区押上1-1-2"
+          src="{BASE}/embed/3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21"
           loading="lazy" style="width:100%;border:0"></iframe>
         ```
 
-        値は `POST /api/sites` に送ったものと同じにする（URL エンコードすること）。
+        `siteId` は `POST /api/sites` に送った `site_id`。URL に署名は付けない
+        （uuid は推測できないので、知っている人だけが開ける）。
 
         | 状況 | 表示 |
         |---|---|
         | 判定済み | 車両別の乗り付け可否・3D モデル・写真・根拠・建物・フィードバック |
         | 判定中 | 「判定中」。終わり次第この枠の中で結果に切り替わる |
-        | 台帳にもジョブにも無い | 開いた時点で判定を起こし、「判定中」を出す |
-        | 判定に失敗 | 理由を出す（開くたびに判定し直すことはしない。やり直しは依頼の送り直し） |
-        | 対応範囲外の地域 | 写真・地図を参考として出す（乗り付け可否は出さない） |
+        | 判定済みだが地図データの無い地域 | 写真・地図を参考として出す（乗り付け可否は出さない） |
+        | 依頼が届いていない・対応範囲外・住所が引けない・判定に失敗・止まった・5 分待っても終わらない | お詫び（どれも同じ文言） |
 
         再判定・削除など現場を変える操作は出さない。地図のリンクだけは別タブで開く。
 
@@ -183,22 +183,11 @@ paths:
         表示を拒む。
       security: []
       parameters:
-        - name: place_id
-          in: query
-          description: Google Place ID。照合の第一の鍵なので、持っていれば必ず付ける
-          schema: { type: string }
-        - name: lat
-          in: query
-          description: 緯度。未判定のとき判定を起こすのに使う
-          schema: { type: number }
-        - name: lng
-          in: query
-          description: 経度。未判定のとき判定を起こすのに使う
-          schema: { type: number }
-        - name: address
-          in: query
-          description: 住所。place_id を持たない現場への照合と、判定の依頼に使う
-          schema: { type: string }
+        - name: siteId
+          in: path
+          required: true
+          description: 本体の現場 ID（`emission_site.id`）
+          schema: { type: string, format: uuid }
       responses:
         "200":
           description: 埋め込み用の画面
@@ -247,37 +236,21 @@ components:
       description: |
         GIS の `INTERNAL_API_TOKEN`（SSM `/gis/prod/INTERNAL_API_TOKEN`）。本体のサーバに
         同じ値を環境変数で持たせる。通るのは `/api/` だけで、GIS の画面は開けない。
-        GIS の Basic 認証が無効な間（2026-09 時点の本番）は無くても通る。
 
   schemas:
     SiteRequest:
       type: object
-      required: [address, components]
+      required: [site_id, address]
       properties:
+        site_id:
+          type: string
+          format: uuid
+          description: 本体の現場 ID（`emission_site.id`）。`/embed/{siteId}` もこれで開く
         address:
           type: string
-          description: 住所。本体の依頼の `address` をそのまま渡す
-        components:
-          $ref: "#/components/schemas/AddressComponents"
-
-    AddressComponents:
-      type: object
-      description: |
-        本体の `AddressComponents`（`../chat/openapi.chat.yaml`）そのもの。依頼の
-        `addressComponents` をそのまま転送すればよい。GIS が読むのは
-        `placeId`・`lat`・`lng` だけで、残りは無視する。
-      required: [lat, lng]
-      additionalProperties: true
-      properties:
-        placeId:
-          type: string
-          description: Google Place ID。照合の第一の鍵なので、持っていれば必ず付ける
-        lat:
-          type: number
-          description: Places で確定した緯度
-        lng:
-          type: number
-          description: Places で確定した経度
+          description: |
+            「都道府県＋市区町村以降」を建物名を除いてつなげたもの
+            （`prefecture` + `city_address`）。正規化は要らない
 
     SiteAccepted:
       type: object
@@ -286,7 +259,7 @@ components:
         id:
           type: string
           description: |
-            GIS の現場 ID。本体が保存する必要はない（`/embed` は依頼の値で引ける）。
+            GIS の現場 ID。本体が保存する必要はない（`/embed` は `site_id` で引ける）。
             座標が一致する既存の現場に吸収されると、住所から決まる ID とは別になる
         status:
           type: string
@@ -298,7 +271,7 @@ components:
       properties:
         status:
           type: string
-          enum: [unsupported, failed]
+          enum: [unsupported, unresolved, failed]
         id:
           type: string
           description: "`failed` のときだけ"
