@@ -73,7 +73,8 @@ git add phone && git commit -m "chore: regenerate phone OpenAPI" && git push
 - DustalkChat → Dustalk 本体（`chat/openapi.chat.yaml`）: Bearer トークン（暫定・未確定）。
 - DustalkChat → ImageModel（`imagemodel/openapi.yaml`）: **認証なし**（パブリック、CORS で Origin 制限）。
 - Dustalk 本体 → GIS（`gis/openapi.yaml`）: `POST /api/sites` は Bearer トークン（GIS の
-  `INTERNAL_API_TOKEN`）。iframe の `/embed` は認証なし（埋め込める親を `frame-ancestors` で制限）。
+  `INTERNAL_API_TOKEN`、必須）。iframe の `/embed/{siteId}` は認証なし（URL の uuid を
+  知っている人だけが開ける。埋め込める親を `frame-ancestors` で制限）。
 
 ## エンドポイント一覧
 
