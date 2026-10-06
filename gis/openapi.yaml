@@ -31,7 +31,8 @@ info:
     その結果を送る。
 
     - 現場の登録・編集の時点で呼び、`detailed` が false（番地まで解けない）なら
-      入力画面で直してもらう。
+      入力画面で警告する（登録は止めない。直さずに進めた現場は業者の画面で
+      お詫びになりやすい）。
     - 依頼の時点で `address` に `normalized`、`components` に `lat` / `lon` /
       `coordinate_level` / `oaza_cho` を詰めて送る。
 
