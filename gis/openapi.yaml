@@ -24,11 +24,21 @@ info:
     `/embed` では判定を起こさない。`POST /api/sites` を呼べなかった現場は、
     業者が開いてもお詫びになる。判定の完了を本体に知らせることはしない。
 
-    ## 住所
+    ## 住所と座標
 
-    本体は **「都道府県＋市区町村以降」を建物名を除いて**送る（`prefecture` +
-    `city_address`）。正規化は要らない。GIS が Google Geocoding で座標を引き、
-    表記の揺れ（全角半角・丁目や番地の書き方）はそこで吸収される。
+    本体は住所（`prefecture` + `city_address`、建物名を除く）を**正規化の Lambda**
+    （`dustalk-dev-geocoder`、本体の AWS。コードは Dustalk/gis の `geocoder/`）に通し、
+    その結果を送る。
+
+    - 現場の登録・編集の時点で呼び、`detailed` が false（番地まで解けない）なら
+      入力画面で直してもらう。
+    - 依頼の時点で `address` に `normalized`、`components` に `lat` / `lon` /
+      `coordinate_level` / `oaza_cho` を詰めて送る。
+
+    GIS は座標の精度が住居（`residential_detail`）か地番（`parcel`）ならその座標で
+    判定する。それより粗い・無いときだけ Google Geocoding で引き、建物単位で町名が
+    合うときしか使わない（合わなければお詫び）。対応範囲の5県では Google が番地まで
+    解けないことが多いため（2026-10 の試験で 65/100）。
 
     ## 判定は現場につき1回
 
@@ -90,7 +100,12 @@ paths:
               $ref: "#/components/schemas/SiteRequest"
             example:
               site_id: 3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21
-              address: 青森県青森市新町1-1-1
+              address: 山形県山形市東青田二丁目7-16
+              components:
+                lat: 38.224588667
+                lng: 140.342301175
+                coordinateLevel: residential_detail
+                town: 東青田
       responses:
         "200":
           description: 台帳にある（判定済み）
@@ -123,7 +138,7 @@ paths:
           description: |
             判定を起こせなかった。
             - `unsupported`: 対応範囲外。判定は起こしていない
-            - `unresolved`: 住所から位置を特定できなかった。判定は起こしていない
+            - `unresolved`: 住所から位置を特定できなかった、または前面道路を測るには粗かった。判定は起こしていない
             - `failed`: 判定に失敗した（GIS の手元開発で同期判定したときのみ。本番は `processing` で返る）
           content:
             application/json:
@@ -248,9 +263,31 @@ components:
           description: 本体の現場 ID（`emission_site.id`）。`/embed/{siteId}` もこれで開く
         address:
           type: string
+          description: 正規化の Lambda の `normalized`
+        components:
+          $ref: "#/components/schemas/RequestLocation"
+
+    RequestLocation:
+      type: object
+      description: |
+        正規化の Lambda の結果から詰める。無くても受け付けるが、そのときは GIS が
+        Google で引くので、お詫びになりやすい。
+      properties:
+        lat:
+          type: number
+          description: 正規化の Lambda の `lat`
+        lng:
+          type: number
+          description: 正規化の Lambda の `lon`
+        coordinateLevel:
+          type: string
           description: |
-            「都道府県＋市区町村以降」を建物名を除いてつなげたもの
-            （`prefecture` + `city_address`）。正規化は要らない
+            正規化の Lambda の `coordinate_level`。`residential_detail` か `parcel` なら
+            GIS はこの座標で判定する
+          enum: [unknown, prefecture, city, machiaza, machiaza_detail, residential_block, residential_detail, parcel]
+        town:
+          type: string
+          description: 正規化の Lambda の `oaza_cho`。GIS が Google の答えを照合するのに使う
 
     SiteAccepted:
       type: object
