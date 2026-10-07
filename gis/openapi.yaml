@@ -26,20 +26,16 @@ info:
 
     ## 住所と座標
 
-    本体は住所（`prefecture` + `city_address`、建物名を除く）を**正規化の Lambda**
-    （`dustalk-dev-geocoder`、本体の AWS。コードは Dustalk/gis の `geocoder/`）に通し、
-    その結果を送る。
+    本体は**入力どおりの住所**を送ればよい（`prefecture` + `city_address`。建物名が
+    付いていても構わない）。正規化は要らない。GIS が住所の正規化 Lambda
+    （デジタル庁の abr-geocoder、Dustalk/gis の `geocoder/`）で表記の揺れを揃え、
+    ABR（アドレス・ベース・レジストリ）の座標を引く。
 
-    - 現場の登録・編集の時点で呼び、`detailed` が false（番地まで解けない）なら
-      入力画面で警告する（登録は止めない。直さずに進めた現場は業者の画面で
-      お詫びになりやすい）。
-    - 依頼の時点で `address` に `normalized`、`components` に `lat` / `lon` /
-      `coordinate_level` / `oaza_cho` を詰めて送る。
-
-    GIS は座標の精度が住居（`residential_detail`）か地番（`parcel`）ならその座標で
-    判定する。それより粗い・無いときだけ Google Geocoding で引き、建物単位で町名が
-    合うときしか使わない（合わなければお詫び）。対応範囲の5県では Google が番地まで
-    解けないことが多いため（2026-10 の試験で 65/100）。
+    - 号（住居表示）か地番まで解け、座標もその精度のときだけ判定する。
+    - 番号や町名の打ち間違い・番地の書き忘れは解けないので、判定せずお詫びになる。
+      入力の時点で警告して直してもらうのは本体の依頼画面の役目（別件）。
+    - Google Geocoding には回さない。対応範囲の5県では番地まで解けないことが多く
+      （2026-10 の試験で 65/100）、別の町を指すこともあったため。
 
     ## 判定は現場につき1回
 
@@ -101,12 +97,7 @@ paths:
               $ref: "#/components/schemas/SiteRequest"
             example:
               site_id: 3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21
-              address: 山形県山形市東青田二丁目7-16
-              components:
-                lat: 38.224588667
-                lng: 140.342301175
-                coordinateLevel: residential_detail
-                town: 東青田
+              address: 山形県山形市東青田二丁目7番16号
       responses:
         "200":
           description: 台帳にある（判定済み）
@@ -264,31 +255,33 @@ components:
           description: 本体の現場 ID（`emission_site.id`）。`/embed/{siteId}` もこれで開く
         address:
           type: string
-          description: 正規化の Lambda の `normalized`
+          description: 入力どおりの住所（都道府県＋市区町村以降）。正規化は GIS がする
         components:
           $ref: "#/components/schemas/RequestLocation"
 
     RequestLocation:
       type: object
       description: |
-        正規化の Lambda の結果から詰める。無くても受け付けるが、そのときは GIS が
-        Google で引くので、お詫びになりやすい。
+        **任意。送らなくてよい。** 本体が abr-geocoder で座標を引いてある場合だけ
+        詰める（将来、本体の依頼画面で住所を確かめるようになったとき用）。
+        `coordinateLevel` が `residential_detail` か `parcel` なら、GIS は正規化を
+        省いてこの座標で判定する。
       properties:
         lat:
           type: number
-          description: 正規化の Lambda の `lat`
+          description: abr-geocoder の `lat`
         lng:
           type: number
-          description: 正規化の Lambda の `lon`
+          description: abr-geocoder の `lon`
         coordinateLevel:
           type: string
           description: |
-            正規化の Lambda の `coordinate_level`。`residential_detail` か `parcel` なら
+            abr-geocoder の `coordinate_level`。`residential_detail` か `parcel` なら
             GIS はこの座標で判定する
           enum: [unknown, prefecture, city, machiaza, machiaza_detail, residential_block, residential_detail, parcel]
         town:
           type: string
-          description: 正規化の Lambda の `oaza_cho`。GIS が Google の答えを照合するのに使う
+          description: abr-geocoder の `oaza_cho`
 
     SiteAccepted:
       type: object
