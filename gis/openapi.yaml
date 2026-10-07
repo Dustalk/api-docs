@@ -24,11 +24,18 @@ info:
     `/embed` では判定を起こさない。`POST /api/sites` を呼べなかった現場は、
     業者が開いてもお詫びになる。判定の完了を本体に知らせることはしない。
 
-    ## 住所
+    ## 住所と座標
 
-    本体は **「都道府県＋市区町村以降」を建物名を除いて**送る（`prefecture` +
-    `city_address`）。正規化は要らない。GIS が Google Geocoding で座標を引き、
-    表記の揺れ（全角半角・丁目や番地の書き方）はそこで吸収される。
+    本体は**入力どおりの住所**を送ればよい（`prefecture` + `city_address`。建物名が
+    付いていても構わない）。正規化は要らない。GIS が住所の正規化 Lambda
+    （デジタル庁の abr-geocoder、Dustalk/gis の `geocoder/`）で表記の揺れを揃え、
+    ABR（アドレス・ベース・レジストリ）の座標を引く。
+
+    - 号（住居表示）か地番まで解け、座標もその精度のときだけ判定する。
+    - 番号や町名の打ち間違い・番地の書き忘れは解けないので、判定せずお詫びになる。
+      入力の時点で警告して直してもらうのは本体の依頼画面の役目（別件）。
+    - Google Geocoding には回さない。対応範囲の5県では番地まで解けないことが多く
+      （2026-10 の試験で 65/100）、別の町を指すこともあったため。
 
     ## 判定は現場につき1回
 
@@ -90,7 +97,7 @@ paths:
               $ref: "#/components/schemas/SiteRequest"
             example:
               site_id: 3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21
-              address: 青森県青森市新町1-1-1
+              address: 山形県山形市東青田二丁目7番16号
       responses:
         "200":
           description: 台帳にある（判定済み）
@@ -123,7 +130,7 @@ paths:
           description: |
             判定を起こせなかった。
             - `unsupported`: 対応範囲外。判定は起こしていない
-            - `unresolved`: 住所から位置を特定できなかった。判定は起こしていない
+            - `unresolved`: 住所から位置を特定できなかった、または前面道路を測るには粗かった。判定は起こしていない
             - `failed`: 判定に失敗した（GIS の手元開発で同期判定したときのみ。本番は `processing` で返る）
           content:
             application/json:
@@ -248,9 +255,33 @@ components:
           description: 本体の現場 ID（`emission_site.id`）。`/embed/{siteId}` もこれで開く
         address:
           type: string
+          description: 入力どおりの住所（都道府県＋市区町村以降）。正規化は GIS がする
+        components:
+          $ref: "#/components/schemas/RequestLocation"
+
+    RequestLocation:
+      type: object
+      description: |
+        **任意。送らなくてよい。** 本体が abr-geocoder で座標を引いてある場合だけ
+        詰める（将来、本体の依頼画面で住所を確かめるようになったとき用）。
+        `coordinateLevel` が `residential_detail` か `parcel` なら、GIS は正規化を
+        省いてこの座標で判定する。
+      properties:
+        lat:
+          type: number
+          description: abr-geocoder の `lat`
+        lng:
+          type: number
+          description: abr-geocoder の `lon`
+        coordinateLevel:
+          type: string
           description: |
-            「都道府県＋市区町村以降」を建物名を除いてつなげたもの
-            （`prefecture` + `city_address`）。正規化は要らない
+            abr-geocoder の `coordinate_level`。`residential_detail` か `parcel` なら
+            GIS はこの座標で判定する
+          enum: [unknown, prefecture, city, machiaza, machiaza_detail, residential_block, residential_detail, parcel]
+        town:
+          type: string
+          description: abr-geocoder の `oaza_cho`
 
     SiteAccepted:
       type: object
