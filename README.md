@@ -31,7 +31,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 │   └── components/schemas.yaml
 ├── chat/                         ← DustalkChat（チャット）→ Dustalk 本体（暫定）
 │   └── openapi.chat.yaml         ← OpenAPI 3.0.3
-├── imagemodel/                   ← DustalkChat → ImageModel（画像認識・実装済）
+├── imagemodel/                   ← Dustalk 本体 → ImageModel（写真からの品目判定・v2 実装中）
 │   └── openapi.yaml              ← OpenAPI 3.0.3
 └── gis/                          ← Dustalk 本体 → GIS（回収可否判定・実装済）
     └── openapi.yaml              ← OpenAPI 3.0.3
@@ -43,7 +43,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 |---|---|---|---|
 | **PhoneAgent（電話）** → Dustalk 本体 | [`phone/openapi.yaml`](phone/openapi.yaml)（3.1） | 暫定 | `PhoneAgent/phone-agent/server/models.py`（Pydantic）から自動生成。`python -m scripts.gen_api_models`。手動編集不可 |
 | **DustalkChat（チャット）** → Dustalk 本体 | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml)（3.0.3） | 暫定 | `DustalkChat/dustalk-chat/src/lib/slots/types.ts` の `Slots` 型を起点に手動 |
-| **DustalkChat** → ImageModel（画像認識） | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml)（3.0.3） | 実装済 | `ImageModel/image-model` 実装を起点に手動 |
+| **Dustalk 本体** → ImageModel（写真からの品目判定） | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml)（3.0.3） | v2 実装中（稼働中のサーバは v1.3.0） | 手動。決定の経緯は `ImageModel/image-model/docs/api-v2.md` |
 | **Dustalk 本体** → GIS（回収可否判定） | [`gis/openapi.yaml`](gis/openapi.yaml)（3.0.3） | 実装済 | `DriverApplication/driver-application`（Dustalk/gis）の実装を起点に手動 |
 
 PhoneAgent 経路と DustalkChat 経路は同一ドメイン（回収申し込み）の別表現。チャット経路の方が
@@ -71,7 +71,7 @@ git add phone && git commit -m "chore: regenerate phone OpenAPI" && git push
 
 - PhoneAgent（`phone/openapi.yaml`）: API キー認証 `X-API-Key: <key>`（暫定・未確定）。
 - DustalkChat → Dustalk 本体（`chat/openapi.chat.yaml`）: Bearer トークン（暫定・未確定）。
-- DustalkChat → ImageModel（`imagemodel/openapi.yaml`）: **認証なし**（パブリック、CORS で Origin 制限）。
+- Dustalk 本体 → ImageModel（`imagemodel/openapi.yaml`）: API キー認証 `X-API-Key: <key>`（backend からだけ呼ぶ）。
 - Dustalk 本体 → GIS（`gis/openapi.yaml`）: `POST /api/sites` は Bearer トークン（GIS の
   `INTERNAL_API_TOKEN`、必須）。iframe の `/embed/{siteId}` は認証なし（URL の uuid を
   知っている人だけが開ける。埋め込める親を `frame-ancestors` で制限）。
@@ -124,10 +124,9 @@ npx @redocly/cli lint                    # 4 サービスを検証
 | JWNET | （未定義） | 事業者・民間事業者持込で **JWNET 登録有無・加入者番号・公開確認キー** |
 | `Location` | `floor` / `dischargeMode` あり | 事業者固有の**ゴミの保管場所（店舗内/店舗外）**が無い |
 
-> ImageModel 経路（`/api/detect`）は 2 モード（`general` / `industrial`）・bbox・型番属性・
-> `retakeSuggestions`・`additional` による複数枚統合まで契約に反映済み
-> （[specs/image-model.md](../specs/image-model.md)）。
-> 残る乖離は `items[].name` が単数で「品目候補（複数）」を表現できない点。
+> ImageModel は v2.0.0 で、品目マスタの品目（`itemId`）を返す形に変えた。判定（`/api/detect`）・
+> 撮り直し（`/api/detect/{analysisId}/retake`）・確定結果の通知（`/api/feedback`）の 3 つ。
+> 産廃モードと型番属性は v2 から外した（それぞれ作り直し・別 API の予定）。組み込み方は atlas #580 で相談中。
 
 ## 未確定事項
 
