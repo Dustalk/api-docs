@@ -4,7 +4,7 @@
 openapi: 3.0.3
 info:
   title: ImageModel API（写真からの品目判定）
-  version: 2.0.0
+  version: 2.0.1
   description: |
     写真から粗大ごみの品目候補を出す REST API。**Dustalk の家庭系依頼**から使う。
 
@@ -58,7 +58,7 @@ info:
     測ることと、判定の改善に使う。保存期間と同意の文言は atlas #580 で相談中。
 
 servers:
-  - url: https://dj5mtbmuwt.ap-northeast-1.awsapprunner.com
+  - url: https://tygdhqm9pf.ap-northeast-1.awsapprunner.com
     description: 開発環境（AWS App Runner, ap-northeast-1）
 
 security:
@@ -391,6 +391,7 @@ components:
           description: 機械で判定するためのコード。
           enum:
             - invalid_image
+            - invalid_request
             - unknown_ward
             - too_many_photos
             - unauthorized
@@ -406,8 +407,9 @@ components:
   responses:
     BadRequest:
       description: |
-        入力の誤り。`invalid_image`（非対応の形式・サイズ超過）、`unknown_ward`、
-        `too_many_photos`（追加写真が合計 3 枚を超えた）。再送しても同じ。
+        入力の誤り。`invalid_image`（非対応の形式・サイズ超過）、`invalid_request`
+        （必須項目の欠け・JSON の形の誤り）、`unknown_ward`、`too_many_photos`
+        （追加写真が合計 3 枚を超えた）。再送しても同じ。
       content:
         application/json:
           schema:
