@@ -4,7 +4,7 @@
 openapi: 3.0.3
 info:
   title: ImageModel API（写真からの品目判定）
-  version: 2.0.1
+  version: 2.1.0
   description: |
     写真から粗大ごみの品目候補を出す REST API。**Dustalk の家庭系依頼**から使う。
 
@@ -228,6 +228,7 @@ paths:
               dustalkRequestId: 6b2f0d1e-5a3c-4e7f-9b8a-1c2d3e4f5a6b
               items:
                 - itemId: 1f0c6a2e-0000-4000-8000-000000000002
+                  quantity: 4
                 - itemId: 1f0c6a2e-0000-4000-8000-000000000020
       responses:
         "204":
@@ -371,13 +372,18 @@ components:
           type: array
           description: |
             利用者が最終的に確定した品目。AI の候補に無かった物を足した場合も含める。
-            ⚠ 数量を受け取るかは未確定（atlas #580）。
+            Dustalk の下書き（`selected_products`）と同じく、品目ごとに数量を持つ。
           items:
             type: object
             required: [itemId]
             properties:
               itemId:
                 type: string
+              quantity:
+                type: integer
+                minimum: 1
+                default: 1
+                description: 確定した数量。省略したら 1。
 
     Error:
       type: object
