@@ -4,7 +4,7 @@
 openapi: 3.0.3
 info:
   title: ImageModel API（写真からの品目判定）
-  version: 2.1.0
+  version: 2.2.0
   description: |
     写真から粗大ごみの品目候補を出す REST API。**Dustalk の家庭系依頼**から使う。
 
@@ -216,6 +216,9 @@ paths:
 
         同じ `analysisId` に2回送られたら、後から来たもので上書きする（履歴は残す）。
         通信の再送や、送信後の編集はそのまま送り直してよい。
+
+        撮り直す前の `analysisId` には 409 `analysis_superseded` を返す。
+        品目マスタに無い `itemId` は弾かずに受け取る（判定から送信までにマスタが変わることがあるため）。
       operationId: feedback
       requestBody:
         required: true
@@ -239,6 +242,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/AnalysisNotFound"
+        "409":
+          $ref: "#/components/responses/AnalysisConflict"
         "410":
           $ref: "#/components/responses/AnalysisExpired"
 
