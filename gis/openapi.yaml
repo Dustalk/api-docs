@@ -4,7 +4,7 @@
 openapi: 3.0.3
 info:
   title: GIS API（現場の回収可否判定）
-  version: 2.0.0
+  version: 2.1.0
   description: |
     住所の現場に、どの大きさの回収車（軽・2t・4t）が乗り付けられるかを判定する。
     前面道路の幅員と進入経路を、国土地理院・PLATEAU・OpenStreetMap のデータから測る。
@@ -15,9 +15,9 @@ info:
 
     1. **依頼者が依頼を出したとき**、本体のサーバが現場 ID と住所を `POST /api/sites`
        に送る。判定が裏で走り始める（100 秒前後）。**返事は読まなくてよい。**
-    2. **回収業者が見るとき**、同じ現場 ID で `GET /embed/{siteId}` を iframe で開く。
-       現場の詳細だけが出る（一覧などには出ていかない）。まだ判定中なら
-       「判定中」を出し、終わり次第切り替わる。
+    2. **回収業者が見るとき**、本体のサーバが JWT を発行し、同じ現場 ID で
+       `GET /embed/{siteId}?token={JWT}` を iframe で開く。現場の詳細だけが出る
+       （一覧などには出ていかない）。まだ判定中なら「判定中」を出し、終わり次第切り替わる。
     3. **判定が回りきらなかったとき**は、業者にはお詫びだけを出す。再試行のボタンも
        自動の再判定も無い。やり直すには本体が同じ依頼を送り直す。
 
@@ -34,8 +34,8 @@ info:
     - 号（住居表示）か地番まで解け、座標もその精度のときだけ判定する。
     - 番号や町名の打ち間違い・番地の書き忘れは解けないので、判定せずお詫びになる。
       入力の時点で警告して直してもらうのは本体の依頼画面の役目（別件）。
-    - Google Geocoding には回さない。対応範囲の5県では番地まで解けないことが多く
-      （2026-10 の試験で 65/100）、別の町を指すこともあったため。
+    - Google Geocoding には回さない。2026-10 の試験（当時の対応範囲の5県から100件）で
+      番地まで解けたのが 65/100 にとどまり、別の町を指すこともあったため。
 
     ## 判定は現場につき1回
 
@@ -45,16 +45,19 @@ info:
 
     ## 対応範囲
 
-    判定できるのは、地図データを取り込んだ地域だけ（2026-09 時点で青森県・岩手県・
-    秋田県・山形県・福岡県の全域）。範囲外は `POST /api/sites` が 422 `unsupported` を返す。
+    判定できるのは、地図データを取り込んだ地域だけ（2026-10 時点で**全47都道府県**）。
+    範囲外は `POST /api/sites` が 422 `unsupported` を返す。今の範囲は GIS の
+    `GET /api/coverage` で分かる（GIS の Basic 認証の内側）。
 
     ## 現在の状態
 
     - `site_id` 付きの `POST /api/sites` は Bearer トークンが必須
-    - GIS の画面の Basic 認証は本番で無効
-    - `/embed` は Basic 認証の対象外。埋め込みを許す親オリジンは GIS 側の
-      `GIS_EMBED_ORIGINS` で絞る（`Content-Security-Policy: frame-ancestors`）。
-      **これはアクセス制御ではない**（URL を直接開けば見える）
+    - GIS の画面（台帳）は Basic 認証の内側（2026-10-31 から）
+    - `/embed` は Basic 認証の対象外。代わりに本体が発行する JWT（`EmbedToken`）で絞る。
+      GIS 側に本体の公開鍵が設定されるまではトークンを見ず、現場 ID だけで開ける
+      （本体の答え待ち。atlas #591）
+    - 埋め込みを許す親オリジンは GIS 側の `GIS_EMBED_ORIGINS` で絞る
+      （`Content-Security-Policy: frame-ancestors`）。**これはアクセス制御ではない**
     - 実証中。画面には「テスト中」と出典（PLATEAU は CC BY 4.0）が出る
 
     実装と詳しい経緯は Dustalk/gis の README「他システムへの埋め込み」。
@@ -138,9 +141,9 @@ paths:
                 $ref: "#/components/schemas/SiteRejected"
               example:
                 status: unsupported
-                error: "この地点の地図データをまだ取り込んでいません。対応範囲: 青森県・岩手県・秋田県・山形県・福岡県の全域"
+                error: "この地点の地図データをまだ取り込んでいません。対応範囲: 北海道・青森県・（中略）・沖縄県の全域"
         "500":
-          description: 判定を起動できなかった（Geocoding・Lambda の呼び出しに失敗など）
+          description: 判定を起動できなかった（判定の Lambda の呼び出しに失敗など）
           content:
             application/json:
               schema:
@@ -156,19 +159,24 @@ paths:
 
         ```html
         <iframe
-          src="{BASE}/embed/3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21"
+          src="{BASE}/embed/3f1c2a4e-9b7d-4c1e-8a2f-0d6e5b4c3a21?token={JWT}"
           loading="lazy" style="width:100%;border:0"></iframe>
         ```
 
-        `siteId` は `POST /api/sites` に送った `site_id`。URL に署名は付けない
-        （uuid は推測できないので、知っている人だけが開ける）。
+        `siteId` は `POST /api/sites` に送った `site_id`。`token` は本体のサーバが
+        業者が画面を開くたびに発行する JWT（`EmbedToken`）。現場 ID は見積り募集中に
+        競合業者にも渡るので、ID だけでは守れない。
+
+        トークンが無い・期限切れ・現場 ID が合わないときは、お詫びを出す（下の表）。
+        枠の中から呼ぶ API（判定中の状態の確認、意見の送信。`/api/embed/{siteId}/...`）
+        には GIS が同じトークンを `Authorization: Bearer` で持ち回す。本体の対応は要らない。
 
         | 状況 | 表示 |
         |---|---|
         | 判定済み | 車両別の乗り付け可否・3D モデル・写真・根拠・建物・フィードバック |
         | 判定中 | 「判定中」。終わり次第この枠の中で結果に切り替わる |
         | 判定済みだが地図データの無い地域 | 写真・地図を参考として出す（乗り付け可否は出さない） |
-        | 依頼が届いていない・対応範囲外・住所が引けない・判定に失敗・止まった・5 分待っても終わらない | お詫び（どれも同じ文言） |
+        | 依頼が届いていない・対応範囲外・住所が引けない・判定に失敗・止まった・5 分待っても終わらない・トークンが通らない | お詫び（どれも同じ文言） |
 
         再判定・削除など現場を変える操作は出さない。地図のリンクだけは別タブで開く。
 
@@ -188,7 +196,8 @@ paths:
 
         GIS 側の `GIS_EMBED_ORIGINS` に登録したオリジンだけ。未登録の親からはブラウザが
         表示を拒む。
-      security: []
+      security:
+        - EmbedToken: []
       parameters:
         - name: siteId
           in: path
@@ -217,8 +226,8 @@ paths:
 
         GIS 側で住所をジオコーディングし、建物単位で1件に決まれば現場ページ
         （`/sites/{id}`）へ移る。決まらなければ候補を出して選ばせる。
-        本体との連携では使わない（`/embed` を使う）。GIS の Basic 認証を有効にすると、
-        ここは認証ダイアログが出る（人がブラウザで開く前提なので、それで足りる）。
+        本体との連携では使わない（`/embed` を使う）。GIS の Basic 認証の内側にあり、
+        開くと認証ダイアログが出る（人がブラウザで開く前提なので、それで足りる）。
       security: []
       parameters:
         - name: address
@@ -241,8 +250,26 @@ components:
       type: http
       scheme: bearer
       description: |
-        GIS の `INTERNAL_API_TOKEN`（SSM `/gis/prod/INTERNAL_API_TOKEN`）。本体のサーバに
-        同じ値を環境変数で持たせる。通るのは `/api/` だけで、GIS の画面は開けない。
+        GIS の `INTERNAL_API_TOKEN`（SSM `/gis/INTERNAL_API_TOKEN`）。本体のサーバに
+        同じ値を環境変数で持たせる。通るのは `POST /api/sites` だけで、GIS の画面や
+        現場の削除・再判定は開けない。
+    EmbedToken:
+      type: apiKey
+      in: query
+      name: token
+      description: |
+        本体が発行する JWT。AI コンシェルジュと発行元・鍵を共有し、`aud` だけが違う。
+
+        | 項目 | 値 |
+        |---|---|
+        | `alg` | ES256 |
+        | `iss` | 本体（値は確認中。atlas #591） |
+        | `aud` | `dustalk-gis` |
+        | `siteId` | 現場 ID。URL の `siteId` と一致すること |
+        | `exp` | 必須。発行から1時間程度。24時間より先は受けない |
+
+        GIS は公開鍵だけを持つ（`GIS_EMBED_JWT_PUBLIC_KEY` か `GIS_EMBED_JWT_JWKS_URL`）。
+        クエリで受けるのは、`/embed` をサーバで描くため（フラグメントはサーバに届かない）。
 
   schemas:
     SiteRequest:
