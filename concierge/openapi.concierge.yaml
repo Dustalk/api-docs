@@ -185,16 +185,15 @@ components:
               items: { type: object }
             wasteItems:
               type: array
-              description: 品目マスタ（business_waste_items）。会話の言葉を当てる別名があると助かる
+              description: |
+                事業系の品目マスタ（business_waste_items）。コンシェルジュは、増えそうなごみの見込みをこの名前の中からだけ出し、
+                店長に肢で選んでもらう（選んだ品目は id で下書きに入る）
               items:
                 type: object
                 required: [id, name]
                 properties:
                   id: { type: string, format: uuid }
                   name: { type: string }
-                  aliases:
-                    type: array
-                    items: { type: string }
 
     Draft:
       oneOf:
@@ -238,8 +237,8 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: 品目マスタの名前か別名と同じときだけ入れる。当たらなければ null（フォームで選んでもらう）
-        label: { type: string, description: 会話での言い方 }
+          description: 店長が肢で選んだ品目（品目マスタの名前）なら入れる。「上記以外」で言われた言葉なら null（フォームで選んでもらう）
+        label: { type: string, description: 品目マスタの名前か、「上記以外」で言われた言葉 }
         source: { $ref: '#/components/schemas/DraftSource' }
         quantity: { type: string, nullable: true, description: 会話では決めていないので、いまは null }
         unit: { type: string, nullable: true }
