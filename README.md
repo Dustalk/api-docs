@@ -1,6 +1,6 @@
 # api-docs — Dustalk 連携 API 仕様
 
-PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認識）・GIS（回収可否判定）と
+PhoneAgent（電話）・DustalkChat（チャット）・AI コンシェルジュ・ImageModel（画像認識）・GIS（回収可否判定）と
 **Dustalk 本体**が相互に呼ぶ API 契約（OpenAPI）を**集約・公開**するリポジトリです。実装コードは含みません。
 
 > **契約の正本は各 OpenAPI ファイル**（機械可読）。エンドポイント・認証は **暫定**
@@ -13,6 +13,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 - 一覧: https://dustalk.github.io/api-docs/
 - 電話: https://dustalk.github.io/api-docs/phone/
 - チャット: https://dustalk.github.io/api-docs/chat/
+- AI コンシェルジュ: https://dustalk.github.io/api-docs/concierge/
 - 画像認識: https://dustalk.github.io/api-docs/imagemodel/
 - 回収可否判定: https://dustalk.github.io/api-docs/gis/
 
@@ -23,7 +24,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 ```
 .
 ├── README.md                     ← このファイル（索引）
-├── redocly.yaml                  ← 4 サービスの定義（lint / build-docs）
+├── redocly.yaml                  ← 5 サービスの定義（lint / build-docs）
 ├── .github/workflows/pages.yml   ← Redoc ビルド → Pages 公開
 ├── phone/                        ← PhoneAgent（電話）→ Dustalk 本体（暫定・自動生成）
 │   ├── openapi.yaml              ← OpenAPI 3.1（paths へ $ref）
@@ -31,6 +32,8 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 │   └── components/schemas.yaml
 ├── chat/                         ← DustalkChat（チャット）→ Dustalk 本体（暫定）
 │   └── openapi.chat.yaml         ← OpenAPI 3.0.3
+├── concierge/                    ← AI コンシェルジュ → Dustalk 本体（下書き・状況。案）
+│   └── openapi.concierge.yaml    ← OpenAPI 3.0.3
 ├── imagemodel/                   ← Dustalk 本体 → ImageModel（写真からの品目判定・v2）
 │   └── openapi.yaml              ← OpenAPI 3.0.3
 └── gis/                          ← Dustalk 本体 → GIS（回収可否判定・実装済）
@@ -43,6 +46,7 @@ PhoneAgent（電話）・DustalkChat（チャット）・ImageModel（画像認�
 |---|---|---|---|
 | **PhoneAgent（電話）** → Dustalk 本体 | [`phone/openapi.yaml`](phone/openapi.yaml)（3.1） | 暫定 | `PhoneAgent/phone-agent/server/models.py`（Pydantic）から自動生成。`python -m scripts.gen_api_models`。手動編集不可 |
 | **DustalkChat（チャット）** → Dustalk 本体 | [`chat/openapi.chat.yaml`](chat/openapi.chat.yaml)（3.0.3） | 暫定 | `DustalkChat/dustalk-chat/src/lib/slots/types.ts` の `Slots` 型を起点に手動 |
+| **AI コンシェルジュ** → Dustalk 本体（依頼フォームの下書き・依頼の状況） | [`concierge/openapi.concierge.yaml`](concierge/openapi.concierge.yaml)（3.0.3） | 案（本体側は未実装） | `DustalkConcierge/dustalk-concierge/src/dustalk/types.ts` を起点に手動 |
 | **Dustalk 本体** → ImageModel（写真からの品目判定） | [`imagemodel/openapi.yaml`](imagemodel/openapi.yaml)（3.0.3） | v2.2.0。開発環境で稼働（2026-10-31）。本体側は未実装 | 手動。決定の経緯は `ImageModel/image-model/docs/api-v2.md` |
 | **Dustalk 本体** → GIS（回収可否判定） | [`gis/openapi.yaml`](gis/openapi.yaml)（3.0.3） | 実装済 | `DriverApplication/driver-application`（Dustalk/gis）の実装を起点に手動 |
 

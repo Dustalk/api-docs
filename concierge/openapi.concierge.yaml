@@ -1,0 +1,321 @@
+# AI コンシェルジュ（dustalk-concierge）→ Dustalk 本体の連携 API 契約（案）。
+# 手動管理。コンシェルジュ側の型は dustalk-concierge の src/dustalk/types.ts。
+openapi: 3.0.3
+info:
+  title: Dustalk 連携 API（AI コンシェルジュ ⇄ Dustalk 本体）
+  version: 0.1.0-draft
+  description: |
+    店舗（B2）の AI コンシェルジュが、会話で聞き取った内容を **本体の画面に合流させる** ための API の案。
+
+    ## 考え方
+    - コンシェルジュは **本体に直接依頼しない**。聞き取った内容を **下書き** にして本体に渡し、
+      店長が **本体の依頼フォームで確かめて出す**（提出・二重提出の防止・提出者は本体の画面が持つ）。
+    - 本体の依頼フォームは `?draft=<draftId>` で下書きを読み、欄に入れて開く
+      （いまある「再依頼の下書き」`GET .../requests/:id/reoffer-draft` と同じ作り）。
+    - コンシェルジュは店舗のデータを書き換えない。読むのは店舗・事業場・いまの定期回収・品目マスタと、
+      出した依頼・見積り・契約・変更依頼の状況（金額は読まない）。
+
+    ## 認証
+    本体が発行したコンシェルジュ用の JWT（iframe に渡しているもの。`aud=dustalk-concierge`、
+    `sub`＝利用者、`accessGrantId`・`emissionSiteId` を足してほしい）を、コンシェルジュがそのまま
+    `Authorization: Bearer` に付けて呼ぶ。本体は自分の鍵で検証し、**その利用者の権限の範囲で** 答える。
+    サービス用の鍵は足さない。
+
+    ## 暫定について
+    本体側にこの API はまだ無い。名前・置き場所・中身は本体の担当と決める。
+    下書きの中身は、本体の `CreateBusinessRecurringSubmissionDto`（request / item）の名前と値に合わせてある。
+servers:
+  - url: https://api.dustalk.example.com
+    description: 暫定（本番 URL 未確定）
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: context
+    description: 店舗の登録内容を読む
+  - name: drafts
+    description: 依頼フォームの下書き
+  - name: requests
+    description: 出した依頼・契約の状況を読む
+
+paths:
+  /concierge/context:
+    get:
+      tags: [context]
+      summary: 店舗・事業場・いまの定期回収・品目マスタ
+      description: トークンの利用者が見られる事業場のうち、トークンの `emissionSiteId` の1つ。
+      operationId: getConciergeContext
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConciergeContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /concierge/drafts:
+    post:
+      tags: [drafts]
+      summary: 依頼フォームの下書きを作る
+      description: |
+        下書きを作るだけで、依頼にはしない。返した `url` を店長が開くと、本体の依頼フォームが下書きを読んで欄に入れる。
+        下書きは作った利用者だけが開け、`expiresAt` を過ぎたら開けない（7日くらいを想定）。
+      operationId: createConciergeDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Draft' }
+      responses:
+        '201':
+          description: 作った
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DraftCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /concierge/drafts/{draftId}:
+    get:
+      tags: [drafts]
+      summary: 下書きを読む（本体の依頼フォームが使う）
+      description: 本体の画面の中で使う。作った利用者以外・期限切れは 404。
+      operationId: getConciergeDraft
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /concierge/requests:
+    get:
+      tags: [requests]
+      summary: 出した依頼・見積り・契約・変更依頼の状況（読むだけ）
+      description: 金額は返さない。詳しくは `url` の本体の画面で見てもらう。
+      operationId: listConciergeRequests
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests]
+                properties:
+                  requests:
+                    type: array
+                    items: { $ref: '#/components/schemas/RequestStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 本体が発行したコンシェルジュ用の JWT（aud=dustalk-concierge）
+
+  responses:
+    BadRequest:
+      description: 形が合わない
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: トークンが無い・期限切れ・署名違い
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: その事業場を扱う権限が無い（閲覧者など）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 無い・期限切れ・ほかの利用者のもの
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    Weekday:
+      type: string
+      description: 本体の Day（祝・定休日なし・未記入は使わない）
+      enum: ['日', '月', '火', '水', '木', '金', '土']
+
+    DraftSource:
+      type: string
+      description: 値の出どころ。`inferred` は AI の見込みなので、本体の画面で「見込み」と分かるように出してほしい
+      enum: [said, chosen, registry, inferred]
+
+    ConciergeContext:
+      type: object
+      required: [account]
+      properties:
+        account:
+          type: object
+          description: 写し方は相談（コンシェルジュの Account 型に合わせる必要はない）
+          required: [storeId, emissionSiteId, profile, operations, wasteItems]
+          properties:
+            storeId: { type: string }
+            emissionSiteId: { type: string, format: uuid }
+            profile:
+              type: object
+              description: 店舗名・業態・住所・曜日ごとの営業時間・回収を避けたい時間帯・ごみ置き場と搬出
+            operations:
+              type: array
+              description: いまの定期回収（品目ごとの曜日・回収業者・運用期間・回収時間帯）
+              items: { type: object }
+            wasteItems:
+              type: array
+              description: |
+                事業系の品目マスタ（business_waste_items）。コンシェルジュは、増えそうなごみの見込みをこの名前の中からだけ出し、
+                店長に肢で選んでもらう（選んだ品目は id で下書きに入る）
+              items:
+                type: object
+                required: [id, name]
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+
+    Draft:
+      oneOf:
+        - $ref: '#/components/schemas/RecurringNewDraft'
+        - $ref: '#/components/schemas/ChangeDraft'
+      discriminator:
+        propertyName: kind
+        mapping:
+          recurring_new: '#/components/schemas/RecurringNewDraft'
+          change: '#/components/schemas/ChangeDraft'
+
+    RecurringNewDraft:
+      type: object
+      description: 定期の新規依頼の下書き（本体の BusinessRecurringSubmissionRequestDto に入れる）。idempotencyKey と提出者は入れない
+      required: [kind, emissionSiteId, storeStatus, desiredStartDate, items, note]
+      properties:
+        kind: { type: string, enum: [recurring_new] }
+        emissionSiteId: { type: string, format: uuid }
+        storeStatus: { type: string, enum: [existing] }
+        desiredStartDate:
+          type: string
+          format: date
+          nullable: true
+          description: 会話で聞いていなければ null（フォームで入れてもらう）
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DraftItem' }
+        note:
+          type: string
+          maxLength: 2000
+          description: 会話で伺った用途・量の目安・時間帯の希望・営業時間の変更・品目マスタに当たらなかった言葉（言われた文のまま）
+
+    DraftItem:
+      type: object
+      description: 本体の BusinessRecurringSubmissionItemDto ＋ 会話の原文
+      required: [businessWasteItemId, label, source, quantity, unit, weekdayMode, frequency, weekdays, scheduleSource]
+      properties:
+        businessWasteItemId:
+          type: string
+          format: uuid
+          nullable: true
+          description: 店長が肢で選んだ品目（品目マスタの名前）なら入れる。「上記以外」で言われた言葉なら null（フォームで選んでもらう）
+        label: { type: string, description: 品目マスタの名前か、「上記以外」で言われた言葉 }
+        source: { $ref: '#/components/schemas/DraftSource' }
+        quantity: { type: string, nullable: true, description: 会話では決めていないので、いまは null }
+        unit: { type: string, nullable: true }
+        weekdayMode: { type: string, enum: ['指定', 'おまかせ'] }
+        frequency: { type: string, nullable: true, enum: ['毎週', null] }
+        weekdays:
+          type: array
+          items: { $ref: '#/components/schemas/Weekday' }
+        scheduleSource:
+          $ref: '#/components/schemas/DraftSource'
+
+    ChangeDraft:
+      type: object
+      description: |
+        いまの定期回収への変更（本体の ChangeRequest、origin='requester'）。
+        **店舗側に変更依頼を確かめて出す画面は12月版に無い**ので、受ける画面から相談。
+        `extra`（ある日だけ回収を足す・量を増やす）は ChangeRequest の kind に無いので、足すかどうかも相談。
+      required: [kind, emissionSiteId, changeKind, operationId, planId, reason, summary, details]
+      properties:
+        kind: { type: string, enum: [change] }
+        emissionSiteId: { type: string, format: uuid }
+        changeKind: { type: string, enum: [skip_date, reschedule, frequency, extra] }
+        operationId: { type: string, description: 対象の定期回収 }
+        planId: { type: string, nullable: true, description: 対象の品目の行。おやすみ・振り替えでその日の全部なら null }
+        reason: { type: string, nullable: true, description: 店長が言った事情（言われた文のまま） }
+        summary: { type: string, description: ChangeRequest.summary と同じ }
+        details:
+          type: array
+          description: ChangeRequest.details と同じ形
+          items:
+            type: object
+            required: [label, value]
+            properties:
+              label: { type: string }
+              value: { type: string }
+        date: { type: string, format: date, description: skip_date / reschedule / extra の対象の日 }
+        toDate: { type: string, format: date, description: reschedule の振り替え先 }
+        startDate: { type: string, format: date, description: frequency の、変える最初の日 }
+        direction: { type: string, enum: [increase, decrease] }
+        weekdaysBefore:
+          type: array
+          items: { $ref: '#/components/schemas/Weekday' }
+        weekdaysAfter:
+          type: array
+          description: 減らすときだけ。増やすときにどの曜日を足すかはフォームで選んでもらう
+          items: { $ref: '#/components/schemas/Weekday' }
+        wasteText: { type: string, description: extra で、いまの構成に無いごみ（言われた文のまま） }
+
+    DraftCreated:
+      type: object
+      required: [draftId, url, expiresAt]
+      properties:
+        draftId: { type: string, format: uuid }
+        url:
+          type: string
+          format: uri
+          description: |
+            本体の依頼フォーム（例 `/portal/requests/regular/new/single?draft=<draftId>`）。
+            iframe の中ではコンシェルジュが親に `postMessage({ type: 'dustalk:concierge:navigate', url })` で移動を頼む
+        expiresAt: { type: string, format: date-time }
+
+    RequestStatus:
+      type: object
+      required: [id, kind, title, status, facts, url, updatedAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [recurring, change, draft] }
+        title: { type: string }
+        status: { type: string, description: 状態の表示名（本体の画面と同じ言葉。例「見積り待ち」「運用中」「回答待ち」） }
+        facts:
+          type: array
+          description: 届いた見積りの件数・運用期間・回答の理由など。金額は入れない
+          items:
+            type: object
+            required: [label, value]
+            properties:
+              label: { type: string }
+              value: { type: string }
+        url: { type: string, format: uri, nullable: true, description: 本体の画面（依頼詳細・見積り比較） }
+        updatedAt: { type: string, format: date-time }
