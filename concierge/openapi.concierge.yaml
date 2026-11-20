@@ -12,6 +12,7 @@ info:
       店長が **本体の依頼フォームで確かめて出す**（提出・二重提出の防止・提出者は本体の画面が持つ）。
     - 本体の依頼フォームは `?draft=<draftId>` で下書きを読み、欄に入れて開く
       （いまある「再依頼の下書き」`GET .../requests/:id/reoffer-draft` と同じ作り）。
+    - 下書きは3種類：定期の新規依頼、いまの定期回収への変更、定期回収の終了（12月版の［回収の終了を依頼する］）。
     - コンシェルジュは店舗のデータを書き換えない。読むのは店舗・事業場・いまの定期回収・品目マスタと、
       出した依頼・見積り・契約・変更依頼の状況（金額は読まない）。
 
@@ -199,11 +200,13 @@ components:
       oneOf:
         - $ref: '#/components/schemas/RecurringNewDraft'
         - $ref: '#/components/schemas/ChangeDraft'
+        - $ref: '#/components/schemas/EndDraft'
       discriminator:
         propertyName: kind
         mapping:
           recurring_new: '#/components/schemas/RecurringNewDraft'
           change: '#/components/schemas/ChangeDraft'
+          recurring_end: '#/components/schemas/EndDraft'
 
     RecurringNewDraft:
       type: object
@@ -287,6 +290,20 @@ components:
           items: { $ref: '#/components/schemas/Weekday' }
         wasteText: { type: string, description: extra で、いまの構成に無いごみ（言われた文のまま） }
 
+    EndDraft:
+      type: object
+      description: |
+        定期回収の終了（12月版の［回収の終了を依頼する］に入れる）。回収業者の返事は待たない。
+        終了日は今日の1か月後から（コンシェルジュでもそれより前の日は受けない）
+      required: [kind, emissionSiteId, operationId, endDate, reason, note]
+      properties:
+        kind: { type: string, enum: [recurring_end] }
+        emissionSiteId: { type: string, format: uuid }
+        operationId: { type: string, description: やめる定期回収 }
+        endDate: { type: string, format: date, description: 回収終了日（この日の回収まで回る） }
+        reason: { type: string, nullable: true, description: やめるわけ（言われた文のまま・任意。回収業者に伝わる） }
+        note: { type: string }
+
     DraftCreated:
       type: object
       required: [draftId, url, expiresAt]
@@ -305,7 +322,7 @@ components:
       required: [id, kind, title, status, facts, url, updatedAt]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [recurring, change, draft] }
+        kind: { type: string, enum: [recurring, change, end, draft] }
         title: { type: string }
         status: { type: string, description: 状態の表示名（本体の画面と同じ言葉。例「見積り待ち」「運用中」「回答待ち」） }
         facts:
@@ -318,4 +335,10 @@ components:
               label: { type: string }
               value: { type: string }
         url: { type: string, format: uri, nullable: true, description: 本体の画面（依頼詳細・見積り比較） }
+        actionLabel: { type: string, description: ボタンの言葉（例「見積りを比べる」）。無ければ「詳しく見る」 }
+        needsAction:
+          type: boolean
+          description: |
+            店長の判断を待っているか（見積りが届いて選ぶ番、など）。コンシェルジュは会話を開いたときに一度だけ知らせ、
+            url の画面へ案内する（選ぶのは本体の画面）。updatedAt が変われば、また知らせる
         updatedAt: { type: string, format: date-time }
